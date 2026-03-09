@@ -17,10 +17,12 @@
 #   VOID_LVM_VG_NAME       — LVM volume group name
 #   VOID_LVM_ROOT_LV_NAME  — root logical volume name
 #   VOID_LVM_SWAP_LV_NAME  — swap logical volume name
+#   LUKS_PASSWORD        — LUKS passphrase (used only if you add an additional
+#                          keyslot or need to reference it here)
 #   ROOT_PASSWORD        — password for the root account
 #   USER_PASSWORD        — password for VOID_USERNAME
 #
-# Customise this file freely. It is the single place for any adjustments to
+# Customise this file freely.  It is the single place for any adjustments to
 # the installed system — additional packages, extra services, dotfiles, etc.
 
 set -euo pipefail
@@ -44,11 +46,10 @@ ln -sf "/usr/share/zoneinfo/${VOID_TIMEZONE}" /etc/localtime
 # ---------------------------------------------------------------------------
 log "Configuring locale ${VOID_LOCALE}..."
 echo "LANG=${VOID_LOCALE}" > /etc/locale.conf
-
 # Enable the locale in libc-locales: uncomment an existing commented line, or
-# append a new line if none is found. The file contains lines like:
+# append a new line if none is found. The file ships with entries like:
 #   #en_US.UTF-8 UTF-8
-# Uncommenting is preferable to appending a duplicate.
+# so a plain grep matches the commented form and would skip enabling it.
 if ! grep -qxF "${VOID_LOCALE} UTF-8" /etc/default/libc-locales 2>/dev/null; then
     sed -i "s/^#\(${VOID_LOCALE} .\+\)/\1/" /etc/default/libc-locales
     grep -qF "${VOID_LOCALE}" /etc/default/libc-locales || \
@@ -108,8 +109,8 @@ log "Generating /etc/crypttab..."
 VOID_LUKS_UUID=$(blkid -s UUID -o value "${VOID_LUKS_PARTITION}")
 
 cat > /etc/crypttab << CRYPTTAB
-# <name>                  <device>                  <key>  <options>
-${VOID_LUKS_DEVICE_NAME}  UUID=${VOID_LUKS_UUID}    none   luks,discard
+# <name>                <device>                           <key>  <options>
+${VOID_LUKS_DEVICE_NAME}  UUID=${VOID_LUKS_UUID}  none   luks,discard
 CRYPTTAB
 
 # ---------------------------------------------------------------------------
@@ -127,9 +128,10 @@ DRACUT
 # ---------------------------------------------------------------------------
 log "Configuring GRUB..."
 
-# rd.luks.uuid — tells dracut/initramfs which LUKS partition to unlock.
-# rd.lvm.vg    — activates the correct volume group after LUKS is open.
-# root         — the root device once LVM is active.
+# Kernel parameters passed to the initramfs:
+#   rd.luks.uuid  — tells dracut which LUKS partition to unlock.
+#   rd.lvm.vg     — activates the correct volume group after unlock.
+#   root          — the root device once LVM is active.
 cat > /etc/default/grub << GRUBCONF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=5
@@ -139,7 +141,7 @@ GRUB_CMDLINE_LINUX=""
 GRUBCONF
 
 log "Installing GRUB to EFI partition..."
-# --no-nvram   : do not write an NVRAM entry (not possible/needed in a chroot)
+# --no-nvram   : do not write an NVRAM entry (not possible inside a chroot)
 # --removable  : install to the fallback EFI path (EFI/BOOT/BOOTX64.EFI) so
 #                the device boots on any machine without a pre-existing NVRAM
 #                entry — essential for removable storage like SD cards.

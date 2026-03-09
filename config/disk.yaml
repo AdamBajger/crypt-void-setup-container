@@ -1,19 +1,23 @@
 # Disk layout configuration — default target: 64 GB micro SD card.
 #
 # All sizes are in mebibytes (MiB).
-# The LUKS partition fills whatever space remains after the EFI and boot
-# partitions. The root logical volume fills whatever space remains after swap.
+# The LUKS partition fills whatever space remains after the EFI, boot, and
+# swap partitions are allocated.  The root logical volume then fills whatever
+# space remains in the volume group after the swap logical volume is created.
 #
-# See the examples/ directory for configurations targeting other device sizes.
+# See the examples/ directory for configurations tailored to other device sizes.
 
 # Total usable size to allocate for the disk image.
-# 61440 MiB ≈ 60 GiB, which fits safely on a 64 GB micro SD card.
+# 61440 MiB ≈ 60 GiB, which fits safely on a 64 GB micro SD card after
+# accounting for manufacturer's definition of "GB" (10^9 vs 2^20 bytes).
 disk_size_mb: 61440
 
 # EFI System Partition (ESP) — formatted as FAT32, mounted at /boot/efi.
 efi_partition_size_mb: 512
 
-# Unencrypted boot partition — formatted as ext4, mounted at /boot.
+# Unencrypted boot partition — contains the kernel and initramfs so that
+# GRUB can load them without needing to deal with encryption.
+# Formatted as ext4, mounted at /boot.
 boot_partition_size_mb: 512
 
 # Swap logical volume inside the encrypted LVM volume group.

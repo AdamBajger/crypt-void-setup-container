@@ -1,7 +1,8 @@
 #!/bin/bash
 # entrypoint.sh — Main orchestration script for the crypt-void-setup-container.
 #
-# Runs inside the VoidLinux Docker container and performs the full pipeline:
+# This script runs inside the VoidLinux Docker container and performs the full
+# pipeline:
 #   1. Parse YAML configuration files.
 #   2. Create a loopback disk image in the output directory.
 #   3. Partition the image (GPT: EFI + unencrypted boot + LUKS).
@@ -9,7 +10,7 @@
 #   5. Set up LVM (volume group + logical volumes) inside the LUKS container.
 #   6. Format all filesystems (FAT32 / ext4 / swap).
 #   7. Mount the filesystem tree.
-#   8. Bootstrap a minimal VoidLinux installation.
+#   8. Bootstrap a minimal VoidLinux installation into the mounted tree.
 #   9. Run void-installation-script.sh inside xchroot to configure the system.
 #  10. Unmount, close LUKS, detach loop device.
 
@@ -80,20 +81,20 @@ VOID_TIMEZONE=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "timezone")
 VOID_LOCALE=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "locale")
 VOID_KEYMAP=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "keymap")
 
-log "  disk_size_mb           = ${VOID_DISK_SIZE_MB}"
-log "  efi_partition_size_mb  = ${VOID_EFI_PARTITION_SIZE_MB}"
-log "  boot_partition_size_mb = ${VOID_BOOT_PARTITION_SIZE_MB}"
-log "  swap_size_mb           = ${VOID_SWAP_SIZE_MB}"
-log "  hostname               = ${VOID_HOSTNAME}"
-log "  username               = ${VOID_USERNAME}"
-log "  timezone               = ${VOID_TIMEZONE}"
-log "  locale                 = ${VOID_LOCALE}"
-log "  keymap                 = ${VOID_KEYMAP}"
+log "  disk_size_mb          = ${VOID_DISK_SIZE_MB}"
+log "  efi_partition_size_mb = ${VOID_EFI_PARTITION_SIZE_MB}"
+log "  boot_partition_size_mb= ${VOID_BOOT_PARTITION_SIZE_MB}"
+log "  swap_size_mb          = ${VOID_SWAP_SIZE_MB}"
+log "  hostname              = ${VOID_HOSTNAME}"
+log "  username              = ${VOID_USERNAME}"
+log "  timezone              = ${VOID_TIMEZONE}"
+log "  locale                = ${VOID_LOCALE}"
+log "  keymap                = ${VOID_KEYMAP}"
 
 # ---------------------------------------------------------------------------
 # Step 2 — Create the loopback disk image directly in the output directory.
-#          Writing straight to /output avoids copying the full image at the
-#          end (which would otherwise require 2× the image size on disk).
+#          Writing to /output from the start avoids a final cp that would
+#          require 2× the image size on disk.
 # ---------------------------------------------------------------------------
 VOID_OUTPUT_IMAGE_NAME="void-linux-encrypted-$(date +%Y%m%d-%H%M%S).img"
 VOID_DISK_IMAGE_PATH="${OUTPUT_DIR}/${VOID_OUTPUT_IMAGE_NAME}"
@@ -111,18 +112,23 @@ VOID_BOOT_PARTITION="${VOID_LOOP_DEVICE}p${VOID_BOOT_PARTITION_INDEX}"
 VOID_LUKS_PARTITION="${VOID_LOOP_DEVICE}p${VOID_LUKS_PARTITION_INDEX}"
 
 # ---------------------------------------------------------------------------
-# Cleanup trap — releases all resources on exit. Removes the incomplete image
-# if the build fails so the output directory is left clean.
+# Cleanup trap — executed on exit to ensure all resources are released even
+# if the script fails partway through.
 # ---------------------------------------------------------------------------
 cleanup() {
     local exit_code=$?
     log "Running cleanup..."
+    # Unmount in reverse order.
     umount "${VOID_INSTALL_MOUNT}/boot/efi" 2>/dev/null || true
     umount "${VOID_INSTALL_MOUNT}/boot"     2>/dev/null || true
     umount "${VOID_INSTALL_MOUNT}"          2>/dev/null || true
+    # Deactivate LVM.
     vgchange -an "${VOID_LVM_VG_NAME}" 2>/dev/null || true
+    # Close LUKS.
     cryptsetup close "${VOID_LUKS_DEVICE_NAME}" 2>/dev/null || true
+    # Detach loop device.
     losetup -d "${VOID_LOOP_DEVICE}" 2>/dev/null || true
+    # Remove incomplete image if the build failed.
     if [[ ${exit_code} -ne 0 ]] && [[ -f "${VOID_DISK_IMAGE_PATH}" ]]; then
         log "Build failed — removing incomplete image ${VOID_DISK_IMAGE_PATH}."
         rm -f "${VOID_DISK_IMAGE_PATH}"
@@ -135,6 +141,7 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 log "Partitioning disk image with GPT layout..."
 
+# All start/end positions are in MiB to ensure proper alignment.
 VOID_EFI_PART_START=1
 VOID_EFI_PART_END=$((VOID_EFI_PART_START + VOID_EFI_PARTITION_SIZE_MB))
 VOID_BOOT_PART_START=${VOID_EFI_PART_END}
@@ -248,6 +255,9 @@ cp /setup/void-installation-script.sh "${VOID_INSTALL_MOUNT}/tmp/void-installati
 chmod +x "${VOID_INSTALL_MOUNT}/tmp/void-installation-script.sh"
 
 log "Running void-installation-script.sh inside xchroot..."
+# All VOID_* and password variables are exported so that the installation
+# script can read them from its environment without any additional argument
+# passing.
 export VOID_HOSTNAME VOID_USERNAME VOID_TIMEZONE VOID_LOCALE VOID_KEYMAP
 export VOID_EFI_PARTITION VOID_BOOT_PARTITION VOID_LUKS_PARTITION
 export VOID_LUKS_DEVICE_NAME VOID_LVM_VG_NAME
@@ -258,7 +268,7 @@ xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-installation-script.sh
 
 # ---------------------------------------------------------------------------
 # Step 10 — Unmount, close LUKS, detach loop device.
-#           The cleanup trap also handles this on failure.
+#           The cleanup trap also handles this automatically on failure.
 # ---------------------------------------------------------------------------
 log "Unmounting filesystems..."
 umount "${VOID_INSTALL_MOUNT}/boot/efi"
@@ -274,7 +284,8 @@ cryptsetup close "${VOID_LUKS_DEVICE_NAME}"
 log "Detaching loop device ${VOID_LOOP_DEVICE}..."
 losetup -d "${VOID_LOOP_DEVICE}"
 
+# Disable the cleanup trap — we have already cleaned up manually.
 trap - EXIT
 
-log "Done. Flash ${VOID_OUTPUT_IMAGE_NAME} to a ${VOID_DISK_SIZE_MB} MiB (or larger)"
-log "device using Balena Etcher or: sudo dd if=output/${VOID_OUTPUT_IMAGE_NAME} of=/dev/sdX bs=4M status=progress"
+log "Done.  Flash ${VOID_OUTPUT_IMAGE_NAME} to a ${VOID_DISK_SIZE_MB} MiB (or larger) device"
+log "using Balena Etcher or: sudo dd if=output/${VOID_OUTPUT_IMAGE_NAME} of=/dev/sdX bs=4M status=progress"

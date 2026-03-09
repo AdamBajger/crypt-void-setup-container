@@ -98,4 +98,3 @@ See `examples/` for pre-computed sizes for 16 GB, 128 GB, and 256 GB devices.
 Edit `void-installation-script.sh` to add packages, configure services, or
 install dotfiles. The script runs inside `xchroot` after the base system is
 bootstrapped and has full access to `xbps-install` and all VoidLinux tools.
-

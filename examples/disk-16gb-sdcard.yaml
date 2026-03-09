@@ -1,0 +1,11 @@
+# Disk layout configuration — target: 16 GB micro SD card.
+#
+# All sizes are in mebibytes (MiB).
+# 15360 MiB ≈ 15 GiB, fitting safely on a 16 GB micro SD card.
+
+disk_size_mb: 15360
+efi_partition_size_mb: 512
+boot_partition_size_mb: 512
+
+# Keep swap small on space-constrained media.
+swap_size_mb: 1024

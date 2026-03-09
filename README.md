@@ -1,23 +1,28 @@
 # crypt-void-setup-container
 
 Builds a fully encrypted [VoidLinux](https://voidlinux.org) disk image inside a
-Docker container. The image is EFI-bootable, uses LUKS1+PBKDF2 encryption with
-LVM inside, and can be flashed directly to a micro SD card or USB drive.
+Docker container. The image is designed for **x86_64 UEFI systems**, uses
+LUKS1+PBKDF2 encryption with LVM inside, and can be flashed directly to a USB
+drive or SD card that will be used as removable storage on that class of
+machine.
 
 Everything runs in a privileged VoidLinux container. A loopback device is used
 during the build so the physical storage device is never touched until you
 deliberately flash the finished image.
 
+See [AUDIT.md](./AUDIT.md) for a detailed viability review, boot-path audit,
+and the remaining things to verify on real hardware.
+
 ---
 
-## Quick start
+## Build, flash, and boot
 
 ### Prerequisites
 
 - Docker with Compose v2 (or `docker-compose`)
 - A Linux host with `loop`, `dm-crypt`, and `lvm` kernel modules available
 
-### 1 — Clone and configure
+### 1 — Clone and configure secrets
 
 ```bash
 git clone https://github.com/AdamBajger/crypt-void-setup-container.git
@@ -26,22 +31,34 @@ mkdir -p output
 
 cp .env.example .env
 $EDITOR .env          # set LUKS_PASSWORD, ROOT_PASSWORD, USER_PASSWORD
+```
 
-# Optional: adjust partition sizes
+The build will fail immediately if any of those three values are left empty.
+
+### 2 — Choose the disk layout
+
+Use the default `config/disk.yaml` if you want an image that fits on a typical
+64 GB device, or replace it with one of the example layouts:
+
+```bash
+# Example: build an image that fits on a 16 GB device
+cp examples/disk-16gb-sdcard.yaml config/disk.yaml
+
+# Or edit the layout manually
 $EDITOR config/disk.yaml
 
 # Optional: adjust hostname, username, timezone, locale, keymap
 $EDITOR config/system.yaml
 ```
 
-### 2 — (Optional) Auto-generate disk.yaml from a physical device
+### 3 — (Optional) Auto-generate `disk.yaml` from a physical device
 
 ```bash
 # Replace /dev/sdX with your target device — do NOT use your system disk!
 sudo ./tools/get-device-spec.sh /dev/sdX > config/disk.yaml
 ```
 
-### 3 — Build and run
+### 4 — Build the image
 
 ```bash
 docker compose --env-file .env run --rm void-setup
@@ -49,20 +66,34 @@ docker compose --env-file .env run --rm void-setup
 
 The finished image is saved to `output/void-linux-encrypted-<timestamp>.img`.
 
-### 4 — Flash the image
+### 5 — Flash the image
+
+List the output directory and choose the exact image file you want to write:
+
+```bash
+ls -lh output/
+```
 
 ```bash
 # Balena Etcher (GUI): open the .img file from the output/ directory.
 
-# Or with dd (replace /dev/sdX with your target device):
-sudo dd if=output/void-linux-encrypted-*.img of=/dev/sdX bs=4M status=progress
+# Or with dd (replace IMAGE_FILE and /dev/sdX with the correct values):
+sudo dd if=output/IMAGE_FILE.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
+
+### 6 — Boot expectations
+
+- The generated image targets **x86_64 UEFI** firmware.
+- `grub-install --removable` places the bootloader at the fallback path
+  `EFI/BOOT/BOOTX64.EFI`, which is the right layout for removable media.
+- Secure Boot is **not** configured.
+- A real boot test is still required before relying on the image.
 
 ---
 
 ## Configuration
 
-**`config/disk.yaml`** — partition sizes in MiB (default targets a 64 GB micro SD card):
+**`config/disk.yaml`** — partition sizes in MiB (default targets a 64 GB removable device):
 
 | Key | Default | Description |
 |-----|---------|-------------|

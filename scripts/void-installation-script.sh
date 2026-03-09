@@ -119,6 +119,7 @@ CRYPTTAB
 log "Configuring dracut for LUKS and LVM..."
 mkdir -p /etc/dracut.conf.d
 cat > /etc/dracut.conf.d/void-crypt-lvm.conf << DRACUT
+hostonly="no"
 add_dracutmodules+=" crypt lvm "
 install_items+=" /etc/crypttab "
 DRACUT

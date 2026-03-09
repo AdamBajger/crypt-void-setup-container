@@ -1,0 +1,20 @@
+# System configuration for the installed VoidLinux system.
+#
+# Passwords are NOT stored here — they are provided exclusively through
+# the LUKS_PASSWORD, ROOT_PASSWORD and USER_PASSWORD environment variables
+# passed to the Docker runtime.
+
+# Hostname of the installed system.
+hostname: voidlinux
+
+# Name of the regular (non-root) user to create.
+username: voiduser
+
+# Timezone — must be a valid entry from /usr/share/zoneinfo.
+timezone: UTC
+
+# Locale — must be a valid glibc locale identifier.
+locale: en_US.UTF-8
+
+# Console keymap — must be a valid keymap name accepted by loadkeys.
+keymap: us

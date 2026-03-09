@@ -1,0 +1,9 @@
+# Disk layout configuration — target: 128 GB micro SD card.
+#
+# All sizes are in mebibytes (MiB).
+# 122880 MiB ≈ 120 GiB, fitting safely on a 128 GB micro SD card.
+
+disk_size_mb: 122880
+efi_partition_size_mb: 512
+boot_partition_size_mb: 512
+swap_size_mb: 8192

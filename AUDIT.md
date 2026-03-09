@@ -55,6 +55,37 @@ The current scripts explicitly support each step:
 - initramfs regeneration after dracut config changes:
   `scripts/void-installation-script.sh`
 
+## Cross-check against the Void Linux docs
+
+The current implementation was compared against the Void Linux handbook pages
+for:
+
+- installation via chroot
+- full disk encryption
+- kernel / dracut boot parameter handling
+
+The comparison lines up well with the project design:
+
+- Void's chroot guide uses `xbps-install -r /mnt ...` followed by `xchroot /mnt`
+  for final configuration. This repository follows the same bootstrap model.
+- Void's FDE guide recommends LUKS1 for GRUB compatibility. This repository also
+  formats the encrypted partition as **LUKS1**.
+- Void's FDE guide adds `rd.luks.uuid=...` and `rd.lvm.vg=...` to the kernel
+  command line. This repository does the same in `/etc/default/grub`.
+- Void's FDE guide includes `/etc/crypttab` in the initramfs through dracut.
+  This repository also installs `/etc/crypttab` into the initramfs.
+
+One important difference is intentional:
+
+- The upstream FDE guide shows a layout where GRUB may need to unlock the
+  encrypted volume itself, so it documents `GRUB_ENABLE_CRYPTODISK=y`.
+- This repository keeps `/boot` on a separate **unencrypted ext4 partition**,
+  so GRUB only needs to read `/boot` and the EFI files. The encrypted root
+  volume is unlocked later by **dracut**, not by GRUB.
+
+Because of that layout, not setting `GRUB_ENABLE_CRYPTODISK=y` here is
+consistent with the design rather than an omission.
+
 ## Changes made during this review
 
 - Simplified the main README so the run/flash flow is easier to follow.

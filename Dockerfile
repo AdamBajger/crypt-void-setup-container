@@ -1,9 +1,14 @@
 FROM voidlinux/voidlinux:latest
 
+ARG VOID_XBPS_REPOSITORY="https://repo-default.voidlinux.org/current"
+
 # Synchronise and upgrade the package index, then install all tools required
 # to orchestrate the encrypted disk setup from within the container.
-RUN xbps-install -Su xbps && \
-    xbps-install -y \
+RUN xbps-install -iyuS \
+        --repository "${VOID_XBPS_REPOSITORY}" \
+        xbps && \
+    xbps-install -iy \
+        --repository "${VOID_XBPS_REPOSITORY}" \
         cryptsetup \
         lvm2 \
         parted \
@@ -11,16 +16,11 @@ RUN xbps-install -Su xbps && \
         e2fsprogs \
         util-linux \
         python3 \
-        python3-PyYAML \
+        python3-yaml \
         xtools \
         xbps && \
     rm -rf /var/cache/xbps/*
 
 WORKDIR /setup
-
-COPY entrypoint.sh .
-COPY void-installation-script.sh .
-
-RUN chmod +x entrypoint.sh void-installation-script.sh
 
 ENTRYPOINT ["/setup/entrypoint.sh"]

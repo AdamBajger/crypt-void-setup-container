@@ -9,6 +9,8 @@ services:
       - ./config:/config:ro
       # Mount the output directory where the final disk image will be saved.
       - ./output:/output
+      # Mount the scripts directory so changes take effect without rebuilding.
+      - ./scripts:/setup
     environment:
       # Passwords are supplied exclusively through environment variables and
       # must never be stored in configuration files or committed to source control.

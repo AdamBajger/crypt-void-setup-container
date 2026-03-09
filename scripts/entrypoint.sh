@@ -12,7 +12,6 @@
 #   7. Mount the filesystem tree.
 #   8. Bootstrap a minimal VoidLinux installation into the mounted tree.
 #   9. Run void-installation-script.sh inside xchroot to configure the system.
-#  10. Unmount, close LUKS, detach loop device.
 
 set -euo pipefail
 
@@ -39,10 +38,49 @@ readonly VOID_EFI_PARTITION_INDEX=1
 readonly VOID_BOOT_PARTITION_INDEX=2
 readonly VOID_LUKS_PARTITION_INDEX=3
 
+# Runtime-populated device paths.
+VOID_LOOP_DEVICE=""
+VOID_EFI_PARTITION=""
+VOID_BOOT_PARTITION=""
+VOID_LUKS_PARTITION=""
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 log() { echo "[void-setup] $*"; }
+die() { echo "[void-setup] ERROR: $*" >&2; exit 1; }
+
+cleanup_minimal() {
+    # Best-effort cleanup: release kernel resources even on failure.
+    umount "${VOID_INSTALL_MOUNT}/boot/efi" 2>/dev/null || true
+    umount "${VOID_INSTALL_MOUNT}/boot" 2>/dev/null || true
+    umount "${VOID_INSTALL_MOUNT}" 2>/dev/null || true
+    vgchange -an "${VOID_LVM_VG_NAME}" 2>/dev/null || true
+    cryptsetup close "${VOID_LUKS_DEVICE_NAME}" 2>/dev/null || true
+    if [[ -n "${VOID_EFI_PARTITION:-}" ]]; then
+        losetup -d "${VOID_EFI_PARTITION}" 2>/dev/null || true
+    fi
+    if [[ -n "${VOID_BOOT_PARTITION:-}" ]]; then
+        losetup -d "${VOID_BOOT_PARTITION}" 2>/dev/null || true
+    fi
+    if [[ -n "${VOID_LUKS_PARTITION:-}" ]]; then
+        losetup -d "${VOID_LUKS_PARTITION}" 2>/dev/null || true
+    fi
+    if [[ -n "${VOID_LOOP_DEVICE:-}" ]]; then
+        losetup -d "${VOID_LOOP_DEVICE}" 2>/dev/null || true
+    fi
+}
+
+trap cleanup_minimal EXIT
+
+ensure_loop_nodes() {
+    # Docker containers may not expose all loop device nodes by default.
+    [[ -c /dev/loop-control ]] || mknod -m 660 /dev/loop-control c 10 237 || true
+    local i
+    for i in $(seq 0 63); do
+        [[ -b "/dev/loop${i}" ]] || mknod -m 660 "/dev/loop${i}" b 7 "${i}" || true
+    done
+}
 
 get_yaml_value() {
     local yaml_file="$1"
@@ -64,6 +102,9 @@ log "Validating environment variables..."
 : "${LUKS_PASSWORD:?LUKS_PASSWORD is required but not set}"
 : "${ROOT_PASSWORD:?ROOT_PASSWORD is required but not set}"
 : "${USER_PASSWORD:?USER_PASSWORD is required but not set}"
+
+log "Ensuring loop device nodes are present..."
+ensure_loop_nodes
 
 # ---------------------------------------------------------------------------
 # Step 1 — Parse YAML configuration.
@@ -104,37 +145,7 @@ truncate -s "${VOID_DISK_SIZE_MB}M" "${VOID_DISK_IMAGE_PATH}"
 
 log "Attaching disk image to a loop device..."
 VOID_LOOP_DEVICE=$(losetup --find --show --partscan "${VOID_DISK_IMAGE_PATH}")
-readonly VOID_LOOP_DEVICE
 log "  loop device = ${VOID_LOOP_DEVICE}"
-
-VOID_EFI_PARTITION="${VOID_LOOP_DEVICE}p${VOID_EFI_PARTITION_INDEX}"
-VOID_BOOT_PARTITION="${VOID_LOOP_DEVICE}p${VOID_BOOT_PARTITION_INDEX}"
-VOID_LUKS_PARTITION="${VOID_LOOP_DEVICE}p${VOID_LUKS_PARTITION_INDEX}"
-
-# ---------------------------------------------------------------------------
-# Cleanup trap — executed on exit to ensure all resources are released even
-# if the script fails partway through.
-# ---------------------------------------------------------------------------
-cleanup() {
-    local exit_code=$?
-    log "Running cleanup..."
-    # Unmount in reverse order.
-    umount "${VOID_INSTALL_MOUNT}/boot/efi" 2>/dev/null || true
-    umount "${VOID_INSTALL_MOUNT}/boot"     2>/dev/null || true
-    umount "${VOID_INSTALL_MOUNT}"          2>/dev/null || true
-    # Deactivate LVM.
-    vgchange -an "${VOID_LVM_VG_NAME}" 2>/dev/null || true
-    # Close LUKS.
-    cryptsetup close "${VOID_LUKS_DEVICE_NAME}" 2>/dev/null || true
-    # Detach loop device.
-    losetup -d "${VOID_LOOP_DEVICE}" 2>/dev/null || true
-    # Remove incomplete image if the build failed.
-    if [[ ${exit_code} -ne 0 ]] && [[ -f "${VOID_DISK_IMAGE_PATH}" ]]; then
-        log "Build failed — removing incomplete image ${VOID_DISK_IMAGE_PATH}."
-        rm -f "${VOID_DISK_IMAGE_PATH}"
-    fi
-}
-trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
 # Step 3 — Partition the disk image (GPT layout targeting EFI systems).
@@ -155,9 +166,43 @@ parted --script "${VOID_LOOP_DEVICE}" \
     mkpart void-luks-partition       "${VOID_LUKS_PART_START}MiB" "100%" \
     set "${VOID_EFI_PARTITION_INDEX}" esp on
 
-# Re-read the partition table so that the kernel picks up the new partitions.
-partprobe "${VOID_LOOP_DEVICE}"
-sleep 1
+# Some container kernels expose partition metadata but do not create /dev/loopXpY
+# nodes reliably. Map each partition as its own loop device by byte offset.
+SECTOR_SIZE=$(blockdev --getss "${VOID_LOOP_DEVICE}")
+EFI_PART_LINE=$(parted -ms "${VOID_LOOP_DEVICE}" unit s print | awk -F: '$1=="1" {print $2":"$4}')
+BOOT_PART_LINE=$(parted -ms "${VOID_LOOP_DEVICE}" unit s print | awk -F: '$1=="2" {print $2":"$4}')
+LUKS_PART_LINE=$(parted -ms "${VOID_LOOP_DEVICE}" unit s print | awk -F: '$1=="3" {print $2":"$4}')
+
+[[ -n "${EFI_PART_LINE}" ]] || die "Could not read EFI partition layout from parted output"
+[[ -n "${BOOT_PART_LINE}" ]] || die "Could not read boot partition layout from parted output"
+[[ -n "${LUKS_PART_LINE}" ]] || die "Could not read LUKS partition layout from parted output"
+
+EFI_START_SECTORS=${EFI_PART_LINE%:*}
+EFI_SIZE_SECTORS=${EFI_PART_LINE#*:}
+BOOT_START_SECTORS=${BOOT_PART_LINE%:*}
+BOOT_SIZE_SECTORS=${BOOT_PART_LINE#*:}
+LUKS_START_SECTORS=${LUKS_PART_LINE%:*}
+LUKS_SIZE_SECTORS=${LUKS_PART_LINE#*:}
+
+EFI_START_SECTORS=${EFI_START_SECTORS%s}
+EFI_SIZE_SECTORS=${EFI_SIZE_SECTORS%s}
+BOOT_START_SECTORS=${BOOT_START_SECTORS%s}
+BOOT_SIZE_SECTORS=${BOOT_SIZE_SECTORS%s}
+LUKS_START_SECTORS=${LUKS_START_SECTORS%s}
+LUKS_SIZE_SECTORS=${LUKS_SIZE_SECTORS%s}
+
+VOID_EFI_PARTITION=$(losetup --find --show \
+    --offset "$((EFI_START_SECTORS * SECTOR_SIZE))" \
+    --sizelimit "$((EFI_SIZE_SECTORS * SECTOR_SIZE))" \
+    "${VOID_DISK_IMAGE_PATH}")
+VOID_BOOT_PARTITION=$(losetup --find --show \
+    --offset "$((BOOT_START_SECTORS * SECTOR_SIZE))" \
+    --sizelimit "$((BOOT_SIZE_SECTORS * SECTOR_SIZE))" \
+    "${VOID_DISK_IMAGE_PATH}")
+VOID_LUKS_PARTITION=$(losetup --find --show \
+    --offset "$((LUKS_START_SECTORS * SECTOR_SIZE))" \
+    --sizelimit "$((LUKS_SIZE_SECTORS * SECTOR_SIZE))" \
+    "${VOID_DISK_IMAGE_PATH}")
 
 log "  ${VOID_EFI_PARTITION}  — EFI System Partition (FAT32)"
 log "  ${VOID_BOOT_PARTITION} — unencrypted boot partition (ext4)"
@@ -187,10 +232,14 @@ log "Creating volume group ${VOID_LVM_VG_NAME}..."
 vgcreate "${VOID_LVM_VG_NAME}" "${VOID_LUKS_DEVICE_PATH}"
 
 log "Creating swap logical volume (${VOID_SWAP_SIZE_MB} MiB)..."
-lvcreate -L "${VOID_SWAP_SIZE_MB}M" -n "${VOID_LVM_SWAP_LV_NAME}" "${VOID_LVM_VG_NAME}"
+lvcreate -W n -Zn -L "${VOID_SWAP_SIZE_MB}M" -n "${VOID_LVM_SWAP_LV_NAME}" "${VOID_LVM_VG_NAME}"
 
 log "Creating root logical volume (remaining space)..."
-lvcreate -l 100%FREE -n "${VOID_LVM_ROOT_LV_NAME}" "${VOID_LVM_VG_NAME}"
+lvcreate -W n -Zn -l 100%FREE -n "${VOID_LVM_ROOT_LV_NAME}" "${VOID_LVM_VG_NAME}"
+
+# Ensure /dev/<vg>/<lv> nodes exist even if udev is unavailable in container.
+vgchange -ay "${VOID_LVM_VG_NAME}" >/dev/null
+vgmknodes "${VOID_LVM_VG_NAME}" >/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Step 6 — Format all filesystems.
@@ -235,6 +284,7 @@ cp /var/db/xbps/keys/* "${VOID_INSTALL_MOUNT}/var/db/xbps/keys/"
 
 XBPS_ARCH=x86_64 xbps-install \
     -y \
+    -i \
     -S \
     -r "${VOID_INSTALL_MOUNT}" \
     --repository="${VOID_XBPS_REPOSITORY}" \
@@ -265,27 +315,6 @@ export VOID_LVM_ROOT_LV_NAME VOID_LVM_SWAP_LV_NAME
 export ROOT_PASSWORD USER_PASSWORD LUKS_PASSWORD
 
 xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-installation-script.sh
-
-# ---------------------------------------------------------------------------
-# Step 10 — Unmount, close LUKS, detach loop device.
-#           The cleanup trap also handles this automatically on failure.
-# ---------------------------------------------------------------------------
-log "Unmounting filesystems..."
-umount "${VOID_INSTALL_MOUNT}/boot/efi"
-umount "${VOID_INSTALL_MOUNT}/boot"
-umount "${VOID_INSTALL_MOUNT}"
-
-log "Deactivating LVM volume group..."
-vgchange -an "${VOID_LVM_VG_NAME}"
-
-log "Closing LUKS container..."
-cryptsetup close "${VOID_LUKS_DEVICE_NAME}"
-
-log "Detaching loop device ${VOID_LOOP_DEVICE}..."
-losetup -d "${VOID_LOOP_DEVICE}"
-
-# Disable the cleanup trap — we have already cleaned up manually.
-trap - EXIT
 
 log "Done.  Flash ${VOID_OUTPUT_IMAGE_NAME} to a ${VOID_DISK_SIZE_MB} MiB (or larger) device"
 log "using Balena Etcher or: sudo dd if=output/${VOID_OUTPUT_IMAGE_NAME} of=/dev/sdX bs=4M status=progress"

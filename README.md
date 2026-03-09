@@ -44,7 +44,7 @@ sudo ./tools/get-device-spec.sh /dev/sdX > config/disk.yaml
 ### 3 — Build and run
 
 ```bash
-docker compose run --rm --env-file .env void-setup
+docker compose --env-file .env run --rm void-setup
 ```
 
 The finished image is saved to `output/void-linux-encrypted-<timestamp>.img`.

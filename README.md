@@ -1,10 +1,10 @@
 # crypt-void-setup-container
 
-Builds a fully encrypted [VoidLinux](https://voidlinux.org) disk image inside a
-Docker container. The image is designed for **x86_64 UEFI systems**, uses
-LUKS1+PBKDF2 encryption with LVM inside, and can be flashed directly to a USB
-drive or SD card that will be used as removable storage on that class of
-machine.
+Builds a [VoidLinux](https://voidlinux.org) disk image inside a Docker
+container. The image is designed for **x86_64 UEFI systems**, uses
+LUKS1+PBKDF2 encryption with LVM inside, keeps `/boot` inside encrypted storage
+(Void handbook FDE style), and can be flashed directly to a USB drive or SD
+card that will be used as removable storage on that class of machine.
 
 Everything runs in a privileged VoidLinux container. A loopback device is used
 during the build so the physical storage device is never touched until you
@@ -86,6 +86,8 @@ sudo dd if=output/IMAGE_FILE.img of=/dev/sdX bs=4M conv=fsync status=progress
 - The generated image targets **x86_64 UEFI** firmware.
 - `grub-install --removable` places the bootloader at the fallback path
   `EFI/BOOT/BOOTX64.EFI`, which is the right layout for removable media.
+- `GRUB_ENABLE_CRYPTODISK=y` is enabled so GRUB can unlock the encrypted
+  container and read the kernel/initramfs from encrypted `/boot`.
 - Secure Boot is **not** configured.
 - A real boot test is still required before relying on the image.
 
@@ -99,7 +101,6 @@ sudo dd if=output/IMAGE_FILE.img of=/dev/sdX bs=4M conv=fsync status=progress
 |-----|---------|-------------|
 | `disk_size_mb` | `61440` | Total image size (61440 MiB ≈ 60 GiB fits a 64 GB card) |
 | `efi_partition_size_mb` | `512` | EFI System Partition (FAT32, `/boot/efi`) |
-| `boot_partition_size_mb` | `512` | Unencrypted boot partition (ext4, `/boot`) |
 | `swap_size_mb` | `4096` | Swap logical volume inside the encrypted LVM group |
 
 See `examples/` for pre-computed sizes for 16 GB, 128 GB, and 256 GB devices.

@@ -5,7 +5,6 @@
 
 disk_size_mb: 15360
 efi_partition_size_mb: 512
-boot_partition_size_mb: 512
 
 # Keep swap small on space-constrained media.
 swap_size_mb: 1024

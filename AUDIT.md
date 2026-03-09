@@ -23,13 +23,15 @@ The overall design is correct:
 
 1. A full-disk GPT image is created.
 2. An EFI System Partition is created for firmware boot.
-3. An unencrypted `/boot` partition is created so GRUB can read the kernel and
-   initramfs without unlocking the encrypted root volume.
-4. The remaining space is encrypted with LUKS1 and used as an LVM physical
+3. The remaining space is encrypted with LUKS1 and used as an LVM physical
    volume.
+4. `/boot` is stored on the encrypted root filesystem (no separate unencrypted
+   `/boot` partition).
 5. Root and swap logical volumes are created inside LVM.
 6. dracut is configured to include the `crypt` and `lvm` modules.
-7. GRUB is installed in removable-media mode, which writes the fallback loader
+7. GRUB cryptodisk support is enabled, so GRUB can unlock the encrypted
+   container and read kernel/initramfs from encrypted `/boot`.
+8. GRUB is installed in removable-media mode, which writes the fallback loader
    path `EFI/BOOT/BOOTX64.EFI`.
 
 That is the right high-level shape for a removable encrypted Linux install.
@@ -40,9 +42,9 @@ The expected boot chain is:
 
 1. UEFI firmware reads the GPT and finds the EFI System Partition.
 2. The firmware loads `EFI/BOOT/BOOTX64.EFI` from the flashed image.
-3. GRUB reads the kernel and initramfs from the unencrypted ext4 `/boot`
-   partition.
-4. dracut reads the kernel command line, unlocks the LUKS container by UUID,
+3. GRUB unlocks the encrypted LUKS container (`GRUB_ENABLE_CRYPTODISK=y`) and
+   reads kernel/initramfs from `/boot` inside the encrypted root filesystem.
+4. dracut reads the kernel command line, unlocks the same LUKS container by UUID,
    activates the LVM volume group, and mounts the root logical volume.
 5. Void Linux continues booting from the encrypted root filesystem.
 
@@ -74,57 +76,11 @@ The comparison lines up well with the project design:
   command line. This repository does the same in `/etc/default/grub`.
 - Void's FDE guide includes `/etc/crypttab` in the initramfs through dracut.
   This repository also installs `/etc/crypttab` into the initramfs.
+- Void's FDE guide uses `GRUB_ENABLE_CRYPTODISK=y` for encrypted `/boot` flows.
+  This repository now sets `GRUB_ENABLE_CRYPTODISK=y` as well.
 
-One important difference is intentional:
-
-- The upstream FDE guide shows a layout where GRUB may need to unlock the
-  encrypted volume itself, so it documents `GRUB_ENABLE_CRYPTODISK=y`.
-- This repository keeps `/boot` on a separate **unencrypted ext4 partition**,
-  so GRUB only needs to read `/boot` and the EFI files. The encrypted root
-  volume is unlocked later by **dracut**, not by GRUB.
-
-Because of that layout, not setting `GRUB_ENABLE_CRYPTODISK=y` here is
-consistent with the design rather than an omission.
-
-## Security implications of that design choice
-
-Yes, using a separate **unencrypted `/boot`** does have a security trade-off.
-It is not automatically "wrong", but it is less resistant to offline tampering
-than a layout where GRUB reads the kernel and initramfs from encrypted storage.
-
-With this repository's layout:
-
-- the root filesystem remains encrypted at rest
-- the kernel, initramfs, and GRUB configuration in `/boot` are readable without
-  the LUKS passphrase
-- someone with physical access to the flashed media could modify those boot
-  files offline
-
-That matters because an attacker who can change boot artifacts may be able to
-install a malicious kernel or initramfs that captures the unlock passphrase or
-subverts the system before the encrypted root is mounted.
-
-The official Void FDE guide is typically stricter here on UEFI systems because:
-
-- the EFI System Partition stays unencrypted, as required for normal UEFI boot
-- `/boot` lives inside the encrypted root filesystem
-- GRUB is configured with `GRUB_ENABLE_CRYPTODISK=y` so it can unlock the
-  encrypted volume and read the kernel/initramfs from there
-
-That official layout is therefore **more secure against offline tampering of
-`/boot` contents** than this repository's current approach.
-
-However, it is still not complete protection against an "evil maid" style
-attack by itself, because without **Secure Boot** or another measured/verified
-boot mechanism, the unencrypted EFI partition can still be modified offline.
-
-So the practical comparison is:
-
-- **Current repository layout**: simpler removable-media boot flow, but weaker
-  protection for `/boot`
-- **Official Void encrypted-boot style**: better protection for the kernel and
-  initramfs, but more complex and still not fully tamper-resistant without
-  Secure Boot
+This removes the earlier `/boot`-unencrypted trade-off and matches the handbook
+more closely for full-disk encryption behavior.
 
 ## Changes made during this review
 
@@ -161,6 +117,10 @@ to boot when that removable media is used with an **x86_64 UEFI** machine.
 There is no Secure Boot signing flow in this repository. On machines with Secure
 Boot enforced, the image may not boot until Secure Boot is disabled or a signed
 boot chain is added.
+
+Even with encrypted `/boot`, this remains relevant for physical-tampering
+resistance because the EFI System Partition itself must stay unencrypted on
+typical UEFI setups.
 
 ### 3. Real hardware testing is still required
 

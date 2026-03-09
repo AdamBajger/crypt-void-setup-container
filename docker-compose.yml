@@ -1,0 +1,17 @@
+services:
+  void-setup:
+    build: .
+    container_name: void-setup-container
+    # Privileged mode is required for loop device management, dm-crypt, and LVM.
+    privileged: true
+    volumes:
+      # Mount your configuration directory (read-only).
+      - ./config:/config:ro
+      # Mount the output directory where the final disk image will be saved.
+      - ./output:/output
+    environment:
+      # Passwords are supplied exclusively through environment variables and
+      # must never be stored in configuration files or committed to source control.
+      - LUKS_PASSWORD=${LUKS_PASSWORD}
+      - ROOT_PASSWORD=${ROOT_PASSWORD}
+      - USER_PASSWORD=${USER_PASSWORD}

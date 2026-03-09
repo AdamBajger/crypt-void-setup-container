@@ -83,7 +83,7 @@ VOID_KEYMAP=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "keymap")
 
 log "  disk_size_mb          = ${VOID_DISK_SIZE_MB}"
 log "  efi_partition_size_mb = ${VOID_EFI_PARTITION_SIZE_MB}"
-log "  boot_partition_size_mb= ${VOID_BOOT_PARTITION_SIZE_MB}"
+log "  boot_partition_size_mb = ${VOID_BOOT_PARTITION_SIZE_MB}"
 log "  swap_size_mb          = ${VOID_SWAP_SIZE_MB}"
 log "  hostname              = ${VOID_HOSTNAME}"
 log "  username              = ${VOID_USERNAME}"

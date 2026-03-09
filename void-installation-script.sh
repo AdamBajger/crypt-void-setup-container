@@ -109,8 +109,8 @@ log "Generating /etc/crypttab..."
 VOID_LUKS_UUID=$(blkid -s UUID -o value "${VOID_LUKS_PARTITION}")
 
 cat > /etc/crypttab << CRYPTTAB
-# <name>                <device>                           <key>  <options>
-${VOID_LUKS_DEVICE_NAME}  UUID=${VOID_LUKS_UUID}  none   luks,discard
+# <name>                  <device>                <key>   <options>
+${VOID_LUKS_DEVICE_NAME}  UUID=${VOID_LUKS_UUID}  none    luks,discard
 CRYPTTAB
 
 # ---------------------------------------------------------------------------

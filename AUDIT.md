@@ -86,6 +86,46 @@ One important difference is intentional:
 Because of that layout, not setting `GRUB_ENABLE_CRYPTODISK=y` here is
 consistent with the design rather than an omission.
 
+## Security implications of that design choice
+
+Yes, using a separate **unencrypted `/boot`** does have a security trade-off.
+It is not automatically "wrong", but it is less resistant to offline tampering
+than a layout where GRUB reads the kernel and initramfs from encrypted storage.
+
+With this repository's layout:
+
+- the root filesystem remains encrypted at rest
+- the kernel, initramfs, and GRUB configuration in `/boot` are readable without
+  the LUKS passphrase
+- someone with physical access to the flashed media could modify those boot
+  files offline
+
+That matters because an attacker who can change boot artifacts may be able to
+install a malicious kernel or initramfs that captures the unlock passphrase or
+subverts the system before the encrypted root is mounted.
+
+The official Void FDE guide is typically stricter here on UEFI systems because:
+
+- the EFI System Partition stays unencrypted, as required for normal UEFI boot
+- `/boot` lives inside the encrypted root filesystem
+- GRUB is configured with `GRUB_ENABLE_CRYPTODISK=y` so it can unlock the
+  encrypted volume and read the kernel/initramfs from there
+
+That official layout is therefore **more secure against offline tampering of
+`/boot` contents** than this repository's current approach.
+
+However, it is still not complete protection against an "evil maid" style
+attack by itself, because without **Secure Boot** or another measured/verified
+boot mechanism, the unencrypted EFI partition can still be modified offline.
+
+So the practical comparison is:
+
+- **Current repository layout**: simpler removable-media boot flow, but weaker
+  protection for `/boot`
+- **Official Void encrypted-boot style**: better protection for the kernel and
+  initramfs, but more complex and still not fully tamper-resistant without
+  Secure Boot
+
 ## Changes made during this review
 
 - Simplified the main README so the run/flash flow is easier to follow.

@@ -46,9 +46,14 @@ ln -sf "/usr/share/zoneinfo/${VOID_TIMEZONE}" /etc/localtime
 # ---------------------------------------------------------------------------
 log "Configuring locale ${VOID_LOCALE}..."
 echo "LANG=${VOID_LOCALE}" > /etc/locale.conf
-# Append the locale to /etc/default/libc-locales if not already present.
-if ! grep -qF "${VOID_LOCALE}" /etc/default/libc-locales; then
-    echo "${VOID_LOCALE} UTF-8" >> /etc/default/libc-locales
+# Enable the locale in libc-locales: uncomment an existing commented line, or
+# append a new line if none is found. The file ships with entries like:
+#   #en_US.UTF-8 UTF-8
+# so a plain grep matches the commented form and would skip enabling it.
+if ! grep -qxF "${VOID_LOCALE} UTF-8" /etc/default/libc-locales 2>/dev/null; then
+    sed -i "s/^#\(${VOID_LOCALE} .\+\)/\1/" /etc/default/libc-locales
+    grep -qF "${VOID_LOCALE}" /etc/default/libc-locales || \
+        echo "${VOID_LOCALE} UTF-8" >> /etc/default/libc-locales
 fi
 xbps-reconfigure -f glibc-locales
 
@@ -104,8 +109,8 @@ log "Generating /etc/crypttab..."
 VOID_LUKS_UUID=$(blkid -s UUID -o value "${VOID_LUKS_PARTITION}")
 
 cat > /etc/crypttab << CRYPTTAB
-# <name>                <device>                           <key>  <options>
-${VOID_LUKS_DEVICE_NAME}  UUID=${VOID_LUKS_UUID}  none   luks,discard
+# <name>                  <device>                <key>   <options>
+${VOID_LUKS_DEVICE_NAME}  UUID=${VOID_LUKS_UUID}  none    luks,discard
 CRYPTTAB
 
 # ---------------------------------------------------------------------------
@@ -136,20 +141,20 @@ GRUB_CMDLINE_LINUX=""
 GRUBCONF
 
 log "Installing GRUB to EFI partition..."
+# --no-nvram   : do not write an NVRAM entry (not possible inside a chroot)
+# --removable  : install to the fallback EFI path (EFI/BOOT/BOOTX64.EFI) so
+#                the device boots on any machine without a pre-existing NVRAM
+#                entry — essential for removable storage like SD cards.
 grub-install \
     --target=x86_64-efi \
     --efi-directory=/boot/efi \
     --bootloader-id=void-linux \
+    --no-nvram \
+    --removable \
     --recheck
 
 log "Generating GRUB configuration..."
 grub-mkconfig -o /boot/grub/grub.cfg
-
-# ---------------------------------------------------------------------------
-# Initramfs — regenerate with the crypt+lvm dracut configuration.
-# ---------------------------------------------------------------------------
-log "Regenerating initramfs with dracut..."
-dracut --force --hostonly
 
 # ---------------------------------------------------------------------------
 # runit services
@@ -160,8 +165,11 @@ ln -sf /etc/sv/sshd   /etc/runit/runsvdir/default/
 
 # ---------------------------------------------------------------------------
 # Finalise xbps package configuration.
+# Reconfiguring all packages ensures the kernel package runs its post-install
+# hook, which calls dracut with the configuration written above and generates
+# the initramfs with the crypt and lvm modules included.
 # ---------------------------------------------------------------------------
-log "Reconfiguring all installed packages..."
+log "Reconfiguring all installed packages (this regenerates the initramfs)..."
 xbps-reconfigure -fa
 
 log "VoidLinux installation configuration complete."

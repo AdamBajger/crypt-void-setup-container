@@ -4,7 +4,7 @@
 # This script runs inside the VoidLinux Docker container and performs the full
 # pipeline:
 #   1. Parse YAML configuration files.
-#   2. Create a loopback disk image sized to match the target device.
+#   2. Create a loopback disk image in the output directory.
 #   3. Partition the image (GPT: EFI + unencrypted boot + LUKS).
 #   4. Set up LUKS1 encryption with PBKDF2 on the third partition.
 #   5. Set up LVM (volume group + logical volumes) inside the LUKS container.
@@ -13,7 +13,6 @@
 #   8. Bootstrap a minimal VoidLinux installation into the mounted tree.
 #   9. Run void-installation-script.sh inside xchroot to configure the system.
 #  10. Unmount, close LUKS, detach loop device.
-#  11. Save the raw disk image to the output directory.
 
 set -euo pipefail
 
@@ -23,8 +22,6 @@ set -euo pipefail
 readonly DISK_CONFIG_FILE="/config/disk.yaml"
 readonly SYSTEM_CONFIG_FILE="/config/system.yaml"
 readonly OUTPUT_DIR="/output"
-
-readonly VOID_DISK_IMAGE_PATH="/tmp/void-disk.img"
 
 readonly VOID_LUKS_DEVICE_NAME="void-luks"
 readonly VOID_LUKS_DEVICE_PATH="/dev/mapper/${VOID_LUKS_DEVICE_NAME}"
@@ -46,7 +43,6 @@ readonly VOID_LUKS_PARTITION_INDEX=3
 # Helpers
 # ---------------------------------------------------------------------------
 log() { echo "[void-setup] $*"; }
-die() { echo "[void-setup] ERROR: $*" >&2; exit 1; }
 
 get_yaml_value() {
     local yaml_file="$1"
@@ -87,7 +83,7 @@ VOID_KEYMAP=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "keymap")
 
 log "  disk_size_mb          = ${VOID_DISK_SIZE_MB}"
 log "  efi_partition_size_mb = ${VOID_EFI_PARTITION_SIZE_MB}"
-log "  boot_partition_size_mb= ${VOID_BOOT_PARTITION_SIZE_MB}"
+log "  boot_partition_size_mb = ${VOID_BOOT_PARTITION_SIZE_MB}"
 log "  swap_size_mb          = ${VOID_SWAP_SIZE_MB}"
 log "  hostname              = ${VOID_HOSTNAME}"
 log "  username              = ${VOID_USERNAME}"
@@ -96,8 +92,13 @@ log "  locale                = ${VOID_LOCALE}"
 log "  keymap                = ${VOID_KEYMAP}"
 
 # ---------------------------------------------------------------------------
-# Step 2 — Create the loopback disk image.
+# Step 2 — Create the loopback disk image directly in the output directory.
+#          Writing to /output from the start avoids a final cp that would
+#          require 2× the image size on disk.
 # ---------------------------------------------------------------------------
+VOID_OUTPUT_IMAGE_NAME="void-linux-encrypted-$(date +%Y%m%d-%H%M%S).img"
+VOID_DISK_IMAGE_PATH="${OUTPUT_DIR}/${VOID_OUTPUT_IMAGE_NAME}"
+
 log "Creating ${VOID_DISK_SIZE_MB} MiB disk image at ${VOID_DISK_IMAGE_PATH}..."
 truncate -s "${VOID_DISK_SIZE_MB}M" "${VOID_DISK_IMAGE_PATH}"
 
@@ -115,6 +116,7 @@ VOID_LUKS_PARTITION="${VOID_LOOP_DEVICE}p${VOID_LUKS_PARTITION_INDEX}"
 # if the script fails partway through.
 # ---------------------------------------------------------------------------
 cleanup() {
+    local exit_code=$?
     log "Running cleanup..."
     # Unmount in reverse order.
     umount "${VOID_INSTALL_MOUNT}/boot/efi" 2>/dev/null || true
@@ -126,6 +128,11 @@ cleanup() {
     cryptsetup close "${VOID_LUKS_DEVICE_NAME}" 2>/dev/null || true
     # Detach loop device.
     losetup -d "${VOID_LOOP_DEVICE}" 2>/dev/null || true
+    # Remove incomplete image if the build failed.
+    if [[ ${exit_code} -ne 0 ]] && [[ -f "${VOID_DISK_IMAGE_PATH}" ]]; then
+        log "Build failed — removing incomplete image ${VOID_DISK_IMAGE_PATH}."
+        rm -f "${VOID_DISK_IMAGE_PATH}"
+    fi
 }
 trap cleanup EXIT
 
@@ -221,6 +228,11 @@ mount "${VOID_EFI_PARTITION}" "${VOID_INSTALL_MOUNT}/boot/efi"
 log "Bootstrapping VoidLinux base system into ${VOID_INSTALL_MOUNT}..."
 log "  (This downloads packages from ${VOID_XBPS_REPOSITORY} — may take a while.)"
 
+# Copy the container's xbps signing keys so that the target rootdir can
+# verify repository signatures without prompting.
+mkdir -p "${VOID_INSTALL_MOUNT}/var/db/xbps/keys"
+cp /var/db/xbps/keys/* "${VOID_INSTALL_MOUNT}/var/db/xbps/keys/"
+
 XBPS_ARCH=x86_64 xbps-install \
     -y \
     -S \
@@ -256,7 +268,7 @@ xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-installation-script.sh
 
 # ---------------------------------------------------------------------------
 # Step 10 — Unmount, close LUKS, detach loop device.
-#           (The cleanup trap handles this automatically on EXIT.)
+#           The cleanup trap also handles this automatically on failure.
 # ---------------------------------------------------------------------------
 log "Unmounting filesystems..."
 umount "${VOID_INSTALL_MOUNT}/boot/efi"
@@ -275,15 +287,5 @@ losetup -d "${VOID_LOOP_DEVICE}"
 # Disable the cleanup trap — we have already cleaned up manually.
 trap - EXIT
 
-# ---------------------------------------------------------------------------
-# Step 11 — Save the raw disk image to the output directory.
-# ---------------------------------------------------------------------------
-VOID_OUTPUT_IMAGE_NAME="void-linux-encrypted-$(date +%Y%m%d-%H%M%S).img"
-VOID_OUTPUT_IMAGE_PATH="${OUTPUT_DIR}/${VOID_OUTPUT_IMAGE_NAME}"
-
-log "Saving disk image to ${VOID_OUTPUT_IMAGE_PATH}..."
-cp "${VOID_DISK_IMAGE_PATH}" "${VOID_OUTPUT_IMAGE_PATH}"
-rm -f "${VOID_DISK_IMAGE_PATH}"
-
 log "Done.  Flash ${VOID_OUTPUT_IMAGE_NAME} to a ${VOID_DISK_SIZE_MB} MiB (or larger) device"
-log "using Balena Etcher or a similar tool."
+log "using Balena Etcher or: sudo dd if=output/${VOID_OUTPUT_IMAGE_NAME} of=/dev/sdX bs=4M status=progress"

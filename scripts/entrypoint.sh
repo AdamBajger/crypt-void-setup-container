@@ -10,7 +10,7 @@
 #   5. Set up LVM (volume group + logical volumes) inside the LUKS container.
 #   6. Format all filesystems (FAT32 / ext4 / swap).
 #   7. Mount the filesystem tree.
-#   8. Bootstrap a minimal VoidLinux installation into the mounted tree.
+#   8. Bootstrap a minimal VoidLinux installation (void-bootstrap.sh).
 #   9. Run void-installation-script.sh inside xchroot to configure the system.
 
 set -euo pipefail
@@ -110,10 +110,10 @@ ensure_loop_nodes
 # Step 1 — Parse YAML configuration.
 # ---------------------------------------------------------------------------
 log "Reading disk configuration from ${DISK_CONFIG_FILE}..."
-VOID_DISK_SIZE_MB=$(get_yaml_value "${DISK_CONFIG_FILE}" "disk_size_mb")
-VOID_EFI_PARTITION_SIZE_MB=$(get_yaml_value "${DISK_CONFIG_FILE}" "efi_partition_size_mb")
-VOID_BOOT_PARTITION_SIZE_MB=$(get_yaml_value "${DISK_CONFIG_FILE}" "boot_partition_size_mb")
-VOID_SWAP_SIZE_MB=$(get_yaml_value "${DISK_CONFIG_FILE}" "swap_size_mb")
+VOID_DISK_SIZE_MIB=$(get_yaml_value "${DISK_CONFIG_FILE}" "disk_size_mib")
+VOID_EFI_PARTITION_SIZE_MIB=$(get_yaml_value "${DISK_CONFIG_FILE}" "efi_partition_size_mib")
+VOID_BOOT_PARTITION_SIZE_MIB=$(get_yaml_value "${DISK_CONFIG_FILE}" "boot_partition_size_mib")
+VOID_SWAP_SIZE_MIB=$(get_yaml_value "${DISK_CONFIG_FILE}" "swap_size_mib")
 
 log "Reading system configuration from ${SYSTEM_CONFIG_FILE}..."
 VOID_HOSTNAME=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "hostname")
@@ -122,10 +122,10 @@ VOID_TIMEZONE=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "timezone")
 VOID_LOCALE=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "locale")
 VOID_KEYMAP=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "keymap")
 
-log "  disk_size_mb          = ${VOID_DISK_SIZE_MB}"
-log "  efi_partition_size_mb = ${VOID_EFI_PARTITION_SIZE_MB}"
-log "  boot_partition_size_mb = ${VOID_BOOT_PARTITION_SIZE_MB}"
-log "  swap_size_mb          = ${VOID_SWAP_SIZE_MB}"
+log "  disk_size_mib          = ${VOID_DISK_SIZE_MIB}"
+log "  efi_partition_size_mib = ${VOID_EFI_PARTITION_SIZE_MIB}"
+log "  boot_partition_size_mib = ${VOID_BOOT_PARTITION_SIZE_MIB}"
+log "  swap_size_mib          = ${VOID_SWAP_SIZE_MIB}"
 log "  hostname              = ${VOID_HOSTNAME}"
 log "  username              = ${VOID_USERNAME}"
 log "  timezone              = ${VOID_TIMEZONE}"
@@ -140,8 +140,8 @@ log "  keymap                = ${VOID_KEYMAP}"
 VOID_OUTPUT_IMAGE_NAME="void-linux-encrypted-$(date +%Y%m%d-%H%M%S).img"
 VOID_DISK_IMAGE_PATH="${OUTPUT_DIR}/${VOID_OUTPUT_IMAGE_NAME}"
 
-log "Creating ${VOID_DISK_SIZE_MB} MiB disk image at ${VOID_DISK_IMAGE_PATH}..."
-truncate -s "${VOID_DISK_SIZE_MB}M" "${VOID_DISK_IMAGE_PATH}"
+log "Creating ${VOID_DISK_SIZE_MIB} MiB disk image at ${VOID_DISK_IMAGE_PATH}..."
+truncate -s "${VOID_DISK_SIZE_MIB}M" "${VOID_DISK_IMAGE_PATH}"
 
 log "Attaching disk image to a loop device..."
 VOID_LOOP_DEVICE=$(losetup --find --show --partscan "${VOID_DISK_IMAGE_PATH}")
@@ -154,9 +154,9 @@ log "Partitioning disk image with GPT layout..."
 
 # All start/end positions are in MiB to ensure proper alignment.
 VOID_EFI_PART_START=1
-VOID_EFI_PART_END=$((VOID_EFI_PART_START + VOID_EFI_PARTITION_SIZE_MB))
+VOID_EFI_PART_END=$((VOID_EFI_PART_START + VOID_EFI_PARTITION_SIZE_MIB))
 VOID_BOOT_PART_START=${VOID_EFI_PART_END}
-VOID_BOOT_PART_END=$((VOID_BOOT_PART_START + VOID_BOOT_PARTITION_SIZE_MB))
+VOID_BOOT_PART_END=$((VOID_BOOT_PART_START + VOID_BOOT_PARTITION_SIZE_MIB))
 VOID_LUKS_PART_START=${VOID_BOOT_PART_END}
 
 parted --script "${VOID_LOOP_DEVICE}" \
@@ -231,8 +231,8 @@ pvcreate "${VOID_LUKS_DEVICE_PATH}"
 log "Creating volume group ${VOID_LVM_VG_NAME}..."
 vgcreate "${VOID_LVM_VG_NAME}" "${VOID_LUKS_DEVICE_PATH}"
 
-log "Creating swap logical volume (${VOID_SWAP_SIZE_MB} MiB)..."
-lvcreate -W n -Zn -L "${VOID_SWAP_SIZE_MB}M" -n "${VOID_LVM_SWAP_LV_NAME}" "${VOID_LVM_VG_NAME}"
+log "Creating swap logical volume (${VOID_SWAP_SIZE_MIB} MiB)..."
+lvcreate -W n -Zn -L "${VOID_SWAP_SIZE_MIB}M" -n "${VOID_LVM_SWAP_LV_NAME}" "${VOID_LVM_VG_NAME}"
 
 log "Creating root logical volume (remaining space)..."
 lvcreate -W n -Zn -l 100%FREE -n "${VOID_LVM_ROOT_LV_NAME}" "${VOID_LVM_VG_NAME}"
@@ -274,39 +274,25 @@ mount "${VOID_EFI_PARTITION}" "${VOID_INSTALL_MOUNT}/boot/efi"
 # ---------------------------------------------------------------------------
 # Step 8 — Bootstrap a minimal VoidLinux installation.
 # ---------------------------------------------------------------------------
-log "Bootstrapping VoidLinux base system into ${VOID_INSTALL_MOUNT}..."
-log "  (This downloads packages from ${VOID_XBPS_REPOSITORY} — may take a while.)"
-
-# Copy the container's xbps signing keys so that the target rootdir can
-# verify repository signatures without prompting.
-mkdir -p "${VOID_INSTALL_MOUNT}/var/db/xbps/keys"
-cp /var/db/xbps/keys/* "${VOID_INSTALL_MOUNT}/var/db/xbps/keys/"
-
-XBPS_ARCH=x86_64 xbps-install \
-    -y \
-    -i \
-    -S \
-    -r "${VOID_INSTALL_MOUNT}" \
-    --repository="${VOID_XBPS_REPOSITORY}" \
-    base-system \
-    grub-x86_64-efi \
-    efibootmgr \
-    cryptsetup \
-    lvm2 \
-    dracut \
-    dhcpcd \
-    openssh
+log "Bootstrapping VoidLinux base system (void-bootstrap.sh)..."
+export VOID_INSTALL_MOUNT VOID_XBPS_REPOSITORY
+bash /setup/void-bootstrap.sh
 
 # ---------------------------------------------------------------------------
 # Step 9 — Configure the system inside xchroot.
 # ---------------------------------------------------------------------------
-log "Copying void-installation-script.sh into chroot..."
+log "Copying installation scripts into chroot..."
 cp /setup/void-installation-script.sh "${VOID_INSTALL_MOUNT}/tmp/void-installation-script.sh"
-chmod +x "${VOID_INSTALL_MOUNT}/tmp/void-installation-script.sh"
+cp /setup/void-setup-minimal.sh       "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh"
+cp /setup/void-setup-extras.sh        "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"
+chmod +x \
+    "${VOID_INSTALL_MOUNT}/tmp/void-installation-script.sh" \
+    "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh" \
+    "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"
 
 log "Running void-installation-script.sh inside xchroot..."
 # All VOID_* and password variables are exported so that the installation
-# script can read them from its environment without any additional argument
+# scripts can read them from their environment without any additional argument
 # passing.
 export VOID_HOSTNAME VOID_USERNAME VOID_TIMEZONE VOID_LOCALE VOID_KEYMAP
 export VOID_EFI_PARTITION VOID_BOOT_PARTITION VOID_LUKS_PARTITION
@@ -316,5 +302,5 @@ export ROOT_PASSWORD USER_PASSWORD LUKS_PASSWORD
 
 xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-installation-script.sh
 
-log "Done.  Flash ${VOID_OUTPUT_IMAGE_NAME} to a ${VOID_DISK_SIZE_MB} MiB (or larger) device"
+log "Done.  Flash ${VOID_OUTPUT_IMAGE_NAME} to a ${VOID_DISK_SIZE_MIB} MiB (or larger) device"
 log "using Balena Etcher or: sudo dd if=output/${VOID_OUTPUT_IMAGE_NAME} of=/dev/sdX bs=4M status=progress"

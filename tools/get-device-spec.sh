@@ -36,13 +36,13 @@ command -v blockdev >/dev/null 2>&1 || die "blockdev is required but not found."
 # Read device attributes
 # ---------------------------------------------------------------------------
 VOID_DEVICE_SIZE_BYTES=$(blockdev --getsize64 "${VOID_TARGET_DEVICE}")
-VOID_DEVICE_SIZE_MB=$(( VOID_DEVICE_SIZE_BYTES / 1024 / 1024 ))
+VOID_DEVICE_SIZE_MIB=$(( VOID_DEVICE_SIZE_BYTES / 1024 / 1024 ))
 VOID_DEVICE_MODEL=$(lsblk -dno MODEL "${VOID_TARGET_DEVICE}" 2>/dev/null | \
     sed 's/[[:space:]]*$//' || echo "unknown")
 
 # Leave a small safety margin (16 MiB) below the physical size so that the
 # image fits on any device of that nominal size.
-VOID_DISK_SIZE_MB=$(( VOID_DEVICE_SIZE_MB - 16 ))
+VOID_DISK_SIZE_MIB=$(( VOID_DEVICE_SIZE_MIB - 16 ))
 
 # ---------------------------------------------------------------------------
 # Heuristic: choose swap size based on disk size.
@@ -51,10 +51,10 @@ VOID_DISK_SIZE_MB=$(( VOID_DEVICE_SIZE_MB - 16 ))
 #   < 128 GiB →  4096 MiB swap
 #   >= 128 GiB → 8192 MiB swap
 # ---------------------------------------------------------------------------
-if   (( VOID_DISK_SIZE_MB < 32768 ));  then VOID_SWAP_SIZE_MB=1024
-elif (( VOID_DISK_SIZE_MB < 65536 ));  then VOID_SWAP_SIZE_MB=2048
-elif (( VOID_DISK_SIZE_MB < 131072 )); then VOID_SWAP_SIZE_MB=4096
-else                                        VOID_SWAP_SIZE_MB=8192
+if   (( VOID_DISK_SIZE_MIB < 32768 ));  then VOID_SWAP_SIZE_MIB=1024
+elif (( VOID_DISK_SIZE_MIB < 65536 ));  then VOID_SWAP_SIZE_MIB=2048
+elif (( VOID_DISK_SIZE_MIB < 131072 )); then VOID_SWAP_SIZE_MIB=4096
+else                                         VOID_SWAP_SIZE_MIB=8192
 fi
 
 # ---------------------------------------------------------------------------
@@ -65,12 +65,13 @@ cat << YAML
 #
 # Source device : ${VOID_TARGET_DEVICE}
 # Device model  : ${VOID_DEVICE_MODEL}
-# Device size   : ${VOID_DEVICE_SIZE_MB} MiB  (${VOID_DEVICE_SIZE_BYTES} bytes)
+# Device size   : ${VOID_DEVICE_SIZE_MIB} MiB  (${VOID_DEVICE_SIZE_BYTES} bytes)
 #
 # All sizes are in mebibytes (MiB).
+# IMPORTANT: values are MiB (1024-based), NOT MB (1000-based).
 
-disk_size_mb: ${VOID_DISK_SIZE_MB}
-efi_partition_size_mb: 512
-boot_partition_size_mb: 512
-swap_size_mb: ${VOID_SWAP_SIZE_MB}
+disk_size_mib: ${VOID_DISK_SIZE_MIB}
+efi_partition_size_mib: 512
+boot_partition_size_mib: 512
+swap_size_mib: ${VOID_SWAP_SIZE_MIB}
 YAML

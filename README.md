@@ -66,10 +66,10 @@ sudo dd if=output/void-linux-encrypted-*.img of=/dev/sdX bs=4M status=progress
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `disk_size_mb` | `61440` | Total image size (61440 MiB ≈ 60 GiB fits a 64 GB card) |
-| `efi_partition_size_mb` | `512` | EFI System Partition (FAT32, `/boot/efi`) |
-| `boot_partition_size_mb` | `512` | Unencrypted boot partition (ext4, `/boot`) |
-| `swap_size_mb` | `4096` | Swap logical volume inside the encrypted LVM group |
+| `disk_size_mib` | `61440` | Total image size in MiB (61440 MiB = 60 GiB fits a 64 GB card) |
+| `efi_partition_size_mib` | `512` | EFI System Partition (FAT32, `/boot/efi`) |
+| `boot_partition_size_mib` | `512` | Unencrypted boot partition (ext4, `/boot`) |
+| `swap_size_mib` | `4096` | Swap logical volume inside the encrypted LVM group |
 
 See `examples/` for pre-computed sizes for 16 GB, 128 GB, and 256 GB devices.
 
@@ -95,6 +95,15 @@ See `examples/` for pre-computed sizes for 16 GB, 128 GB, and 256 GB devices.
 
 ## Customising the installation
 
-Edit `void-installation-script.sh` to add packages, configure services, or
-install dotfiles. The script runs inside `xchroot` after the base system is
-bootstrapped and has full access to `xbps-install` and all VoidLinux tools.
+The `scripts/` directory contains four scripts that run in order:
+
+| Script | Runs in | Purpose |
+|--------|---------|---------|
+| `void-bootstrap.sh` | host (outside chroot) | Installs the base package set into the target rootfs |
+| `void-installation-script.sh` | inside `xchroot` | Orchestrator — calls the two scripts below |
+| `void-setup-minimal.sh` | inside `xchroot` | Everything required for a bootable system (hostname, locale, fstab, crypttab, dracut, GRUB, users, runit services) |
+| `void-setup-extras.sh` | inside `xchroot` | **Your customisations** — extra packages, services, dotfiles, etc. |
+
+To add packages or configuration, edit `scripts/void-setup-extras.sh`.  
+To change the base package set installed before the chroot, edit `scripts/void-bootstrap.sh`.  
+The minimal setup in `scripts/void-setup-minimal.sh` should rarely need to be changed.

@@ -19,7 +19,6 @@
 #   VOID_LOCALE          — locale  (e.g. "en_US.UTF-8")
 #   VOID_KEYMAP          — keymap  (e.g. "us")
 #   VOID_EFI_PARTITION   — block device path of the EFI partition
-#   VOID_BOOT_PARTITION  — block device path of the boot partition
 #   VOID_LUKS_PARTITION  — block device path of the LUKS partition
 #   VOID_LUKS_DEVICE_NAME  — dm name for the opened LUKS container
 #   VOID_LVM_VG_NAME       — LVM volume group name

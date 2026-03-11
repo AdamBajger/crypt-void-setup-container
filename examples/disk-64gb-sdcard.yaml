@@ -8,5 +8,4 @@
 
 disk_size_mib: 61440
 efi_partition_size_mib: 512
-boot_partition_size_mib: 512
 swap_size_mib: 4096

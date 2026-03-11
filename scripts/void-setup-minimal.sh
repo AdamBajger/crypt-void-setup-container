@@ -10,8 +10,8 @@
 #   • Root password and regular-user account
 #   • /etc/fstab  (all partitions / logical volumes by UUID)
 #   • /etc/crypttab  (LUKS unlock entry)
-#   • dracut configuration  (crypt + lvm modules, crypttab embedded)
-#   • GRUB installation and configuration
+#   • dracut configuration  (crypt + lvm modules, hostonly=no, crypttab embedded)
+#   • GRUB installation and configuration  (GRUB_ENABLE_CRYPTODISK=y)
 #   • Essential runit service links
 #   • xbps-reconfigure -fa  (triggers dracut to regenerate the initramfs)
 #
@@ -24,7 +24,6 @@
 #   VOID_LOCALE          — locale  (e.g. "en_US.UTF-8")
 #   VOID_KEYMAP          — keymap  (e.g. "us")
 #   VOID_EFI_PARTITION   — block device path of the EFI partition
-#   VOID_BOOT_PARTITION  — block device path of the boot partition
 #   VOID_LUKS_PARTITION  — block device path of the LUKS partition
 #   VOID_LUKS_DEVICE_NAME  — dm name for the opened LUKS container
 #   VOID_LVM_VG_NAME       — LVM volume group name
@@ -94,7 +93,6 @@ echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel-sudo
 log "Generating /etc/fstab..."
 
 VOID_EFI_UUID=$(blkid -s UUID -o value "${VOID_EFI_PARTITION}")
-VOID_BOOT_UUID=$(blkid -s UUID -o value "${VOID_BOOT_PARTITION}")
 VOID_ROOT_UUID=$(blkid -s UUID -o value \
     "/dev/${VOID_LVM_VG_NAME}/${VOID_LVM_ROOT_LV_NAME}")
 VOID_SWAP_UUID=$(blkid -s UUID -o value \
@@ -103,7 +101,6 @@ VOID_SWAP_UUID=$(blkid -s UUID -o value \
 cat > /etc/fstab << FSTAB
 # <file system>               <mount point>  <type>  <options>              <dump>  <pass>
 UUID=${VOID_ROOT_UUID}        /              ext4    defaults,relatime      0       1
-UUID=${VOID_BOOT_UUID}        /boot          ext4    defaults,relatime      0       2
 UUID=${VOID_EFI_UUID}         /boot/efi      vfat    defaults,relatime      0       2
 UUID=${VOID_SWAP_UUID}        none           swap    sw                     0       0
 tmpfs                         /tmp           tmpfs   defaults,nosuid,nodev  0       0
@@ -127,6 +124,7 @@ CRYPTTAB
 log "Configuring dracut for LUKS and LVM..."
 mkdir -p /etc/dracut.conf.d
 cat > /etc/dracut.conf.d/void-crypt-lvm.conf << DRACUT
+hostonly="no"
 add_dracutmodules+=" crypt lvm "
 install_items+=" /etc/crypttab "
 DRACUT
@@ -144,6 +142,7 @@ cat > /etc/default/grub << GRUBCONF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=5
 GRUB_DISTRIBUTOR="Void Linux"
+GRUB_ENABLE_CRYPTODISK=y
 GRUB_CMDLINE_LINUX_DEFAULT="loglevel=4 rd.luks.uuid=${VOID_LUKS_UUID} rd.lvm.vg=${VOID_LVM_VG_NAME} root=/dev/${VOID_LVM_VG_NAME}/${VOID_LVM_ROOT_LV_NAME}"
 GRUB_CMDLINE_LINUX=""
 GRUBCONF

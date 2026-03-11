@@ -93,9 +93,9 @@ PYEOF
 # Step 0 — Validate required environment variables.
 # ---------------------------------------------------------------------------
 log "Validating environment variables..."
-: "${LUKS_PASSWORD:?LUKS_PASSWORD is required but not set}"
-: "${ROOT_PASSWORD:?ROOT_PASSWORD is required but not set}"
-: "${USER_PASSWORD:?USER_PASSWORD is required but not set}"
+[[ -n "${LUKS_PASSWORD:-}" ]] || die "LUKS_PASSWORD is required but not set"
+[[ -n "${ROOT_PASSWORD:-}" ]] || die "ROOT_PASSWORD is required but not set"
+[[ -n "${USER_PASSWORD:-}" ]] || die "USER_PASSWORD is required but not set"
 
 log "Ensuring loop device nodes are present..."
 ensure_loop_nodes

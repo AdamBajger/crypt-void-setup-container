@@ -30,7 +30,7 @@ cd crypt-void-setup-container
 mkdir -p output
 
 cp .env.example .env
-$EDITOR .env          # set LUKS_PASSWORD, ROOT_PASSWORD, USER_PASSWORD
+$EDITOR .env          # set the three required passwords (see .env.example)
 ```
 
 The build will fail immediately if any of those three values are left empty.
@@ -120,8 +120,8 @@ See `examples/` for pre-computed sizes for 16 GB, 128 GB, and 256 GB devices.
 | Variable | Description |
 |----------|-------------|
 | `LUKS_PASSWORD` | LUKS1 encryption passphrase |
-| `ROOT_PASSWORD` | Password for the `root` account |
-| `USER_PASSWORD` | Password for the regular user account |
+| `ROOT_PASSWORD` | Passphrase for the `root` account |
+| `USER_PASSWORD` | Passphrase for the regular user account |
 
 ---
 

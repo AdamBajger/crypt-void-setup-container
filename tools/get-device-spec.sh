@@ -72,6 +72,5 @@ cat << YAML
 
 disk_size_mib: ${VOID_DISK_SIZE_MIB}
 efi_partition_size_mib: 512
-boot_partition_size_mib: 512
 swap_size_mib: ${VOID_SWAP_SIZE_MIB}
 YAML

@@ -1,6 +1,6 @@
 # Audit log
 
-This document records a code review of the repository as it exists in this PR.
+This document records a code review of the repository as it currently stands.
 It is an assessment of whether the generated image should be flashable and
 bootable, plus the places where real-hardware testing is still required.
 

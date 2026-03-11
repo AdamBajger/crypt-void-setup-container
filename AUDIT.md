@@ -10,7 +10,6 @@ bootable, plus the places where real-hardware testing is still required.
 - `docker-compose.yml`
 - `scripts/entrypoint.sh`
 - `scripts/void-bootstrap.sh`
-- `scripts/void-installation-script.sh`
 - `scripts/void-setup-minimal.sh`
 - `scripts/void-setup-extras.sh`
 - `config/disk.yaml`
@@ -176,7 +175,6 @@ Before saying the image is fully proven, run this on real hardware:
 
 - `bash -n scripts/entrypoint.sh`
 - `bash -n scripts/void-bootstrap.sh`
-- `bash -n scripts/void-installation-script.sh`
 - `bash -n scripts/void-setup-minimal.sh`
 - `bash -n scripts/void-setup-extras.sh`
 - `bash -n tools/get-device-spec.sh`

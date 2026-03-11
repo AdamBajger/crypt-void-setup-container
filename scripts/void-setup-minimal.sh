@@ -3,7 +3,7 @@
 # installation.
 #
 # This script runs INSIDE the xchroot environment, called from
-# void-installation-script.sh.  It covers everything that is strictly
+# entrypoint.sh.  It covers everything that is strictly
 # necessary for the system to boot and be accessible:
 #
 #   • Hostname, timezone, locale, console keymap

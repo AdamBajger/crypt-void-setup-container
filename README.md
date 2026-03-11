@@ -127,12 +127,11 @@ See `examples/` for pre-computed sizes for 16 GB, 128 GB, and 256 GB devices.
 
 ## Customising the installation
 
-The `scripts/` directory contains four scripts that run in order:
+The `scripts/` directory contains three scripts that run in order:
 
 | Script | Runs in | Purpose |
 |--------|---------|---------|
 | `void-bootstrap.sh` | host (outside chroot) | Installs the base package set into the target rootfs |
-| `void-installation-script.sh` | inside `xchroot` | Orchestrator — calls the two scripts below |
 | `void-setup-minimal.sh` | inside `xchroot` | Everything required for a bootable system (hostname, locale, fstab, crypttab, dracut, GRUB, users, runit services) |
 | `void-setup-extras.sh` | inside `xchroot` | **Your customisations** — extra packages, services, dotfiles, etc. |
 

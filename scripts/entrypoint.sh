@@ -11,7 +11,7 @@
 #   6. Format all filesystems (FAT32 / ext4 / swap).
 #   7. Mount the filesystem tree.
 #   8. Bootstrap a minimal VoidLinux installation (void-bootstrap.sh).
-#   9. Run void-installation-script.sh inside xchroot to configure the system.
+#   9. Run void-setup-minimal.sh then void-setup-extras.sh inside xchroot.
 
 set -euo pipefail
 
@@ -253,15 +253,12 @@ bash /setup/void-bootstrap.sh
 # Step 9 — Configure the system inside xchroot.
 # ---------------------------------------------------------------------------
 log "Copying installation scripts into chroot..."
-cp /setup/void-installation-script.sh "${VOID_INSTALL_MOUNT}/tmp/void-installation-script.sh"
-cp /setup/void-setup-minimal.sh       "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh"
-cp /setup/void-setup-extras.sh        "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"
+cp /setup/void-setup-minimal.sh "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh"
+cp /setup/void-setup-extras.sh  "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"
 chmod +x \
-    "${VOID_INSTALL_MOUNT}/tmp/void-installation-script.sh" \
     "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh" \
     "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"
 
-log "Running void-installation-script.sh inside xchroot..."
 # All VOID_* and password variables are exported so that the installation
 # scripts can read them from their environment without any additional argument
 # passing.
@@ -271,7 +268,11 @@ export VOID_LUKS_DEVICE_NAME VOID_LVM_VG_NAME
 export VOID_LVM_ROOT_LV_NAME VOID_LVM_SWAP_LV_NAME
 export ROOT_PASSWORD USER_PASSWORD LUKS_PASSWORD
 
-xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-installation-script.sh
+log "Running void-setup-minimal.sh inside xchroot..."
+xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-setup-minimal.sh
+
+log "Running void-setup-extras.sh inside xchroot..."
+xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-setup-extras.sh
 
 log "Done.  Flash ${VOID_OUTPUT_IMAGE_NAME} to a ${VOID_DISK_SIZE_MIB} MiB (or larger) device"
 log "using Balena Etcher or: sudo dd if=output/${VOID_OUTPUT_IMAGE_NAME} of=/dev/sdX bs=4M status=progress"

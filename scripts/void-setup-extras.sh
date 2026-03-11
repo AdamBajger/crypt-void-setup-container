@@ -3,7 +3,7 @@
 # installed VoidLinux system.
 #
 # This script runs INSIDE the xchroot environment, called from
-# void-installation-script.sh AFTER void-setup-minimal.sh has completed.
+# entrypoint.sh AFTER void-setup-minimal.sh has completed.
 # None of the steps here are critical for the system to boot; they add
 # convenience, tooling, or personalisation on top of the minimal base.
 #

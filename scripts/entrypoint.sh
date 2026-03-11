@@ -5,8 +5,8 @@
 # pipeline:
 #   1. Parse YAML configuration files.
 #   2. Create a loopback disk image in the output directory.
-#   3. Partition the image (GPT: EFI + unencrypted boot + LUKS).
-#   4. Set up LUKS1 encryption with PBKDF2 on the third partition.
+#   3. Partition the image (GPT: EFI + LUKS).
+#   4. Set up LUKS1 encryption with PBKDF2 on the second partition.
 #   5. Set up LVM (volume group + logical volumes) inside the LUKS container.
 #   6. Format all filesystems (FAT32 / ext4 / swap).
 #   7. Mount the filesystem tree.
@@ -35,13 +35,11 @@ readonly VOID_XBPS_REPOSITORY="https://repo-default.voidlinux.org/current"
 
 # Partition indices within the loop device.
 readonly VOID_EFI_PARTITION_INDEX=1
-readonly VOID_BOOT_PARTITION_INDEX=2
-readonly VOID_LUKS_PARTITION_INDEX=3
+readonly VOID_LUKS_PARTITION_INDEX=2
 
 # Runtime-populated device paths.
 VOID_LOOP_DEVICE=""
 VOID_EFI_PARTITION=""
-VOID_BOOT_PARTITION=""
 VOID_LUKS_PARTITION=""
 
 # ---------------------------------------------------------------------------
@@ -53,15 +51,11 @@ die() { echo "[void-setup] ERROR: $*" >&2; exit 1; }
 cleanup_minimal() {
     # Best-effort cleanup: release kernel resources even on failure.
     umount "${VOID_INSTALL_MOUNT}/boot/efi" 2>/dev/null || true
-    umount "${VOID_INSTALL_MOUNT}/boot" 2>/dev/null || true
     umount "${VOID_INSTALL_MOUNT}" 2>/dev/null || true
     vgchange -an "${VOID_LVM_VG_NAME}" 2>/dev/null || true
     cryptsetup close "${VOID_LUKS_DEVICE_NAME}" 2>/dev/null || true
     if [[ -n "${VOID_EFI_PARTITION:-}" ]]; then
         losetup -d "${VOID_EFI_PARTITION}" 2>/dev/null || true
-    fi
-    if [[ -n "${VOID_BOOT_PARTITION:-}" ]]; then
-        losetup -d "${VOID_BOOT_PARTITION}" 2>/dev/null || true
     fi
     if [[ -n "${VOID_LUKS_PARTITION:-}" ]]; then
         losetup -d "${VOID_LUKS_PARTITION}" 2>/dev/null || true
@@ -112,7 +106,6 @@ ensure_loop_nodes
 log "Reading disk configuration from ${DISK_CONFIG_FILE}..."
 VOID_DISK_SIZE_MB=$(get_yaml_value "${DISK_CONFIG_FILE}" "disk_size_mb")
 VOID_EFI_PARTITION_SIZE_MB=$(get_yaml_value "${DISK_CONFIG_FILE}" "efi_partition_size_mb")
-VOID_BOOT_PARTITION_SIZE_MB=$(get_yaml_value "${DISK_CONFIG_FILE}" "boot_partition_size_mb")
 VOID_SWAP_SIZE_MB=$(get_yaml_value "${DISK_CONFIG_FILE}" "swap_size_mb")
 
 log "Reading system configuration from ${SYSTEM_CONFIG_FILE}..."
@@ -124,7 +117,6 @@ VOID_KEYMAP=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "keymap")
 
 log "  disk_size_mb          = ${VOID_DISK_SIZE_MB}"
 log "  efi_partition_size_mb = ${VOID_EFI_PARTITION_SIZE_MB}"
-log "  boot_partition_size_mb = ${VOID_BOOT_PARTITION_SIZE_MB}"
 log "  swap_size_mb          = ${VOID_SWAP_SIZE_MB}"
 log "  hostname              = ${VOID_HOSTNAME}"
 log "  username              = ${VOID_USERNAME}"
@@ -155,14 +147,11 @@ log "Partitioning disk image with GPT layout..."
 # All start/end positions are in MiB to ensure proper alignment.
 VOID_EFI_PART_START=1
 VOID_EFI_PART_END=$((VOID_EFI_PART_START + VOID_EFI_PARTITION_SIZE_MB))
-VOID_BOOT_PART_START=${VOID_EFI_PART_END}
-VOID_BOOT_PART_END=$((VOID_BOOT_PART_START + VOID_BOOT_PARTITION_SIZE_MB))
-VOID_LUKS_PART_START=${VOID_BOOT_PART_END}
+VOID_LUKS_PART_START=${VOID_EFI_PART_END}
 
 parted --script "${VOID_LOOP_DEVICE}" \
     mklabel gpt \
     mkpart void-efi-partition  fat32 "${VOID_EFI_PART_START}MiB"  "${VOID_EFI_PART_END}MiB" \
-    mkpart void-boot-partition ext4  "${VOID_BOOT_PART_START}MiB" "${VOID_BOOT_PART_END}MiB" \
     mkpart void-luks-partition       "${VOID_LUKS_PART_START}MiB" "100%" \
     set "${VOID_EFI_PARTITION_INDEX}" esp on
 
@@ -170,24 +159,18 @@ parted --script "${VOID_LOOP_DEVICE}" \
 # nodes reliably. Map each partition as its own loop device by byte offset.
 SECTOR_SIZE=$(blockdev --getss "${VOID_LOOP_DEVICE}")
 EFI_PART_LINE=$(parted -ms "${VOID_LOOP_DEVICE}" unit s print | awk -F: '$1=="1" {print $2":"$4}')
-BOOT_PART_LINE=$(parted -ms "${VOID_LOOP_DEVICE}" unit s print | awk -F: '$1=="2" {print $2":"$4}')
-LUKS_PART_LINE=$(parted -ms "${VOID_LOOP_DEVICE}" unit s print | awk -F: '$1=="3" {print $2":"$4}')
+LUKS_PART_LINE=$(parted -ms "${VOID_LOOP_DEVICE}" unit s print | awk -F: '$1=="2" {print $2":"$4}')
 
 [[ -n "${EFI_PART_LINE}" ]] || die "Could not read EFI partition layout from parted output"
-[[ -n "${BOOT_PART_LINE}" ]] || die "Could not read boot partition layout from parted output"
 [[ -n "${LUKS_PART_LINE}" ]] || die "Could not read LUKS partition layout from parted output"
 
 EFI_START_SECTORS=${EFI_PART_LINE%:*}
 EFI_SIZE_SECTORS=${EFI_PART_LINE#*:}
-BOOT_START_SECTORS=${BOOT_PART_LINE%:*}
-BOOT_SIZE_SECTORS=${BOOT_PART_LINE#*:}
 LUKS_START_SECTORS=${LUKS_PART_LINE%:*}
 LUKS_SIZE_SECTORS=${LUKS_PART_LINE#*:}
 
 EFI_START_SECTORS=${EFI_START_SECTORS%s}
 EFI_SIZE_SECTORS=${EFI_SIZE_SECTORS%s}
-BOOT_START_SECTORS=${BOOT_START_SECTORS%s}
-BOOT_SIZE_SECTORS=${BOOT_SIZE_SECTORS%s}
 LUKS_START_SECTORS=${LUKS_START_SECTORS%s}
 LUKS_SIZE_SECTORS=${LUKS_SIZE_SECTORS%s}
 
@@ -195,21 +178,16 @@ VOID_EFI_PARTITION=$(losetup --find --show \
     --offset "$((EFI_START_SECTORS * SECTOR_SIZE))" \
     --sizelimit "$((EFI_SIZE_SECTORS * SECTOR_SIZE))" \
     "${VOID_DISK_IMAGE_PATH}")
-VOID_BOOT_PARTITION=$(losetup --find --show \
-    --offset "$((BOOT_START_SECTORS * SECTOR_SIZE))" \
-    --sizelimit "$((BOOT_SIZE_SECTORS * SECTOR_SIZE))" \
-    "${VOID_DISK_IMAGE_PATH}")
 VOID_LUKS_PARTITION=$(losetup --find --show \
     --offset "$((LUKS_START_SECTORS * SECTOR_SIZE))" \
     --sizelimit "$((LUKS_SIZE_SECTORS * SECTOR_SIZE))" \
     "${VOID_DISK_IMAGE_PATH}")
 
 log "  ${VOID_EFI_PARTITION}  — EFI System Partition (FAT32)"
-log "  ${VOID_BOOT_PARTITION} — unencrypted boot partition (ext4)"
 log "  ${VOID_LUKS_PARTITION} — LUKS1 encrypted partition (contains LVM)"
 
 # ---------------------------------------------------------------------------
-# Step 4 — Set up LUKS1 encryption with PBKDF2 on the third partition.
+# Step 4 — Set up LUKS1 encryption with PBKDF2 on the LUKS partition.
 # ---------------------------------------------------------------------------
 log "Formatting ${VOID_LUKS_PARTITION} as LUKS1 with PBKDF2..."
 echo -n "${LUKS_PASSWORD}" | cryptsetup luksFormat \
@@ -247,9 +225,6 @@ vgmknodes "${VOID_LVM_VG_NAME}" >/dev/null || true
 log "Formatting EFI partition as FAT32..."
 mkfs.vfat -F32 -n VOID-EFI "${VOID_EFI_PARTITION}"
 
-log "Formatting boot partition as ext4..."
-mkfs.ext4 -L void-boot "${VOID_BOOT_PARTITION}"
-
 log "Formatting root logical volume as ext4..."
 mkfs.ext4 -L void-root "/dev/${VOID_LVM_VG_NAME}/${VOID_LVM_ROOT_LV_NAME}"
 
@@ -262,10 +237,6 @@ mkswap -L void-swap "/dev/${VOID_LVM_VG_NAME}/${VOID_LVM_SWAP_LV_NAME}"
 log "Mounting root filesystem at ${VOID_INSTALL_MOUNT}..."
 mkdir -p "${VOID_INSTALL_MOUNT}"
 mount "/dev/${VOID_LVM_VG_NAME}/${VOID_LVM_ROOT_LV_NAME}" "${VOID_INSTALL_MOUNT}"
-
-log "Mounting boot partition at ${VOID_INSTALL_MOUNT}/boot..."
-mkdir -p "${VOID_INSTALL_MOUNT}/boot"
-mount "${VOID_BOOT_PARTITION}" "${VOID_INSTALL_MOUNT}/boot"
 
 log "Mounting EFI partition at ${VOID_INSTALL_MOUNT}/boot/efi..."
 mkdir -p "${VOID_INSTALL_MOUNT}/boot/efi"
@@ -309,7 +280,7 @@ log "Running void-installation-script.sh inside xchroot..."
 # script can read them from its environment without any additional argument
 # passing.
 export VOID_HOSTNAME VOID_USERNAME VOID_TIMEZONE VOID_LOCALE VOID_KEYMAP
-export VOID_EFI_PARTITION VOID_BOOT_PARTITION VOID_LUKS_PARTITION
+export VOID_EFI_PARTITION VOID_LUKS_PARTITION
 export VOID_LUKS_DEVICE_NAME VOID_LVM_VG_NAME
 export VOID_LVM_ROOT_LV_NAME VOID_LVM_SWAP_LV_NAME
 export ROOT_PASSWORD USER_PASSWORD LUKS_PASSWORD

@@ -8,9 +8,9 @@
 #   ./tools/get-device-spec.sh /dev/sdb
 #
 # The script reads the physical device's size and model, then prints a
-# disk.yaml suitable for use in config/disk.yaml to stdout.  The EFI and
-# boot partition sizes are kept at the recommended defaults (512 MiB each).
-# The swap size is derived from a simple heuristic based on total disk size.
+# disk.yaml suitable for use in config/disk.yaml to stdout. The EFI partition
+# size is kept at the recommended default (512 MiB). The swap size is derived
+# from a simple heuristic based on total disk size.
 #
 # Run this script on the HOST system (not inside the container) with the
 # target storage device connected.  Root privileges are required to access
@@ -71,6 +71,5 @@ cat << YAML
 
 disk_size_mb: ${VOID_DISK_SIZE_MB}
 efi_partition_size_mb: 512
-boot_partition_size_mb: 512
 swap_size_mb: ${VOID_SWAP_SIZE_MB}
 YAML

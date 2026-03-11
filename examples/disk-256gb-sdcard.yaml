@@ -5,5 +5,4 @@
 
 disk_size_mb: 245760
 efi_partition_size_mb: 512
-boot_partition_size_mb: 512
 swap_size_mb: 8192

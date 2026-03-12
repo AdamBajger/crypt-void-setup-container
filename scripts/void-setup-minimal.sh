@@ -1,10 +1,11 @@
 #!/bin/bash
-# void-setup-minimal.sh — Minimal steps required for a bootable VoidLinux
-# installation.
+# void-setup-minimal.sh — Minimal system configuration for a bootable
+# VoidLinux installation.
 #
-# This script runs INSIDE the xchroot environment, called from
-# entrypoint.sh.  It covers everything that is strictly
-# necessary for the system to boot and be accessible:
+# This script runs INSIDE the xchroot environment, called from entrypoint.sh
+# after the base packages have been installed and the target rootfs has been
+# mounted. It covers everything that is strictly necessary for the system to
+# boot and be accessible:
 #
 #   • Hostname, timezone, locale, console keymap
 #   • Root password and regular-user account
@@ -16,7 +17,7 @@
 #   • xbps-reconfigure -fa  (triggers dracut to regenerate the initramfs)
 #
 # Receives its configuration through environment variables exported by
-# entrypoint.sh before calling xchroot:
+# entrypoint.sh:
 #
 #   VOID_HOSTNAME        — system hostname
 #   VOID_USERNAME        — name of the regular user to create
@@ -36,9 +37,6 @@ set -euo pipefail
 
 log() { echo "[void-setup-minimal] $*"; }
 
-# ---------------------------------------------------------------------------
-# Hostname
-# ---------------------------------------------------------------------------
 log "Setting hostname to ${VOID_HOSTNAME}..."
 echo "${VOID_HOSTNAME}" > /etc/hostname
 
@@ -71,6 +69,12 @@ log "Setting console keymap to ${VOID_KEYMAP}..."
 echo "KEYMAP=${VOID_KEYMAP}" > /etc/vconsole.conf
 
 # ---------------------------------------------------------------------------
+# Install runtime services
+# ---------------------------------------------------------------------------
+log "Installing runtime services (dhcpcd, openssh)..."
+XBPS_ARCH="${VOID_TARGET_ARCH}" xbps-install -y dhcpcd openssh
+
+# ---------------------------------------------------------------------------
 # Root password
 # ---------------------------------------------------------------------------
 log "Setting root password..."
@@ -91,7 +95,6 @@ echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel-sudo
 # /etc/fstab
 # ---------------------------------------------------------------------------
 log "Generating /etc/fstab..."
-
 VOID_EFI_UUID=$(blkid -s UUID -o value "${VOID_EFI_PARTITION}")
 VOID_ROOT_UUID=$(blkid -s UUID -o value \
     "/dev/${VOID_LVM_VG_NAME}/${VOID_LVM_ROOT_LV_NAME}")
@@ -110,7 +113,6 @@ FSTAB
 # /etc/crypttab
 # ---------------------------------------------------------------------------
 log "Generating /etc/crypttab..."
-
 VOID_LUKS_UUID=$(blkid -s UUID -o value "${VOID_LUKS_PARTITION}")
 
 cat > /etc/crypttab << CRYPTTAB

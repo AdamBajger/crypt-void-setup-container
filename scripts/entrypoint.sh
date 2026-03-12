@@ -10,8 +10,8 @@
 #   5. Set up LVM (volume group + logical volumes) inside the LUKS container.
 #   6. Format all filesystems (FAT32 / ext4 / swap).
 #   7. Mount the filesystem tree.
-#   8. Bootstrap a minimal VoidLinux installation (void-bootstrap.sh).
-#   9. Run void-setup-minimal.sh then void-setup-extras.sh inside xchroot.
+#   8. Run all required bootable-system setup (void-setup-minimal.sh).
+#   9. Run optional extra customisation inside xchroot.
 
 set -euo pipefail
 
@@ -31,6 +31,7 @@ readonly VOID_LVM_SWAP_LV_NAME="void-swap"
 
 readonly VOID_INSTALL_MOUNT="/mnt/void-install"
 
+readonly VOID_TARGET_ARCH="x86_64"
 readonly VOID_XBPS_REPOSITORY="https://repo-default.voidlinux.org/current"
 
 # Partition indices within the loop device.
@@ -41,6 +42,12 @@ readonly VOID_LUKS_PARTITION_INDEX=2
 VOID_LOOP_DEVICE=""
 VOID_EFI_PARTITION=""
 VOID_LUKS_PARTITION=""
+VOID_DISK_IMAGE_PATH=""
+VOID_OUTPUT_IMAGE_NAME=""
+VOID_BUILD_TIMESTAMP=""
+VOID_BUILD_COMPLETED=0
+VOID_LAST_FILES_USED_BYTES=0
+VOID_FINAL_IMAGE_NAME=""
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,6 +56,8 @@ log() { echo "[void-setup] $*"; }
 die() { echo "[void-setup] ERROR: $*" >&2; exit 1; }
 
 cleanup_minimal() {
+    local exit_status="$1"
+
     # Best-effort cleanup: release kernel resources even on failure.
     umount "${VOID_INSTALL_MOUNT}/boot/efi" 2>/dev/null || true
     umount "${VOID_INSTALL_MOUNT}" 2>/dev/null || true
@@ -63,9 +72,15 @@ cleanup_minimal() {
     if [[ -n "${VOID_LOOP_DEVICE:-}" ]]; then
         losetup -d "${VOID_LOOP_DEVICE}" 2>/dev/null || true
     fi
+
+    if [[ "${exit_status}" -eq 0 && "${VOID_BUILD_COMPLETED}" -eq 1 && -n "${VOID_FINAL_IMAGE_NAME:-}" && -f "${VOID_DISK_IMAGE_PATH:-}" ]]; then
+        local finalized_image_path="${OUTPUT_DIR}/${VOID_FINAL_IMAGE_NAME}"
+        log "Renaming completed image to ${finalized_image_path}..."
+        mv "${VOID_DISK_IMAGE_PATH}" "${finalized_image_path}"
+    fi
 }
 
-trap cleanup_minimal EXIT
+trap 'cleanup_minimal $?' EXIT
 
 ensure_loop_nodes() {
     # Docker containers may not expose all loop device nodes by default.
@@ -87,6 +102,69 @@ if value == "" or value is None:
     sys.exit(f"Key '{sys.argv[2]}' not found or empty in {sys.argv[1]}")
 print(value)
 PYEOF
+}
+
+bytes_to_mib() {
+    awk -v bytes="$1" 'BEGIN { printf "%.2f", bytes / 1048576 }'
+}
+
+bytes_to_gib() {
+    awk -v bytes="$1" 'BEGIN { printf "%.2f", bytes / 1073741824 }'
+}
+
+get_df_value_bytes() {
+    local mount_path="$1"
+    local field_name="$2"
+
+    df -B1P "${mount_path}" | awk -v field_name="${field_name}" '
+        NR == 2 {
+            if (field_name == "size") {
+                print $2
+            } else if (field_name == "used") {
+                print $3
+            } else if (field_name == "avail") {
+                print $4
+            }
+        }
+    '
+}
+
+report_phase_usage() {
+    local phase_label="$1"
+    local root_size_bytes root_used_bytes root_avail_bytes
+    local efi_size_bytes efi_used_bytes efi_avail_bytes
+    local files_used_bytes image_consumed_bytes image_total_bytes
+
+    root_size_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}" size)
+    root_used_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}" used)
+    root_avail_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}" avail)
+
+    efi_size_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}/boot/efi" size)
+    efi_used_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}/boot/efi" used)
+    efi_avail_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}/boot/efi" avail)
+
+    files_used_bytes=$((root_used_bytes + efi_used_bytes))
+    image_total_bytes=$(blockdev --getsize64 "${VOID_LOOP_DEVICE}")
+    image_consumed_bytes=$((image_total_bytes - root_avail_bytes - efi_avail_bytes))
+    VOID_LAST_FILES_USED_BYTES="${files_used_bytes}"
+
+    log "Disk usage after ${phase_label}:"
+    log "  root_fs_used          = ${root_used_bytes} bytes ($(bytes_to_mib "${root_used_bytes}") MiB, $(bytes_to_gib "${root_used_bytes}") GiB)"
+    log "  root_fs_free          = ${root_avail_bytes} bytes ($(bytes_to_mib "${root_avail_bytes}") MiB, $(bytes_to_gib "${root_avail_bytes}") GiB)"
+    log "  root_fs_size          = ${root_size_bytes} bytes ($(bytes_to_mib "${root_size_bytes}") MiB, $(bytes_to_gib "${root_size_bytes}") GiB)"
+    log "  efi_fs_used           = ${efi_used_bytes} bytes ($(bytes_to_mib "${efi_used_bytes}") MiB, $(bytes_to_gib "${efi_used_bytes}") GiB)"
+    log "  efi_fs_free           = ${efi_avail_bytes} bytes ($(bytes_to_mib "${efi_avail_bytes}") MiB, $(bytes_to_gib "${efi_avail_bytes}") GiB)"
+    log "  efi_fs_size           = ${efi_size_bytes} bytes ($(bytes_to_mib "${efi_size_bytes}") MiB, $(bytes_to_gib "${efi_size_bytes}") GiB)"
+    log "  files_used_total      = ${files_used_bytes} bytes ($(bytes_to_mib "${files_used_bytes}") MiB, $(bytes_to_gib "${files_used_bytes}") GiB)"
+    log "  image_space_consumed  = ${image_consumed_bytes} bytes ($(bytes_to_mib "${image_consumed_bytes}") MiB, $(bytes_to_gib "${image_consumed_bytes}") GiB)"
+}
+
+build_final_image_name() {
+    local files_used_bytes="$1"
+    local files_used_gib
+
+    files_used_gib=$(bytes_to_gib "${files_used_bytes}")
+    printf 'voidlinux_fde_%s_du%sgib_%s.img' "${VOID_TARGET_ARCH}" "${files_used_gib}" "${VOID_BUILD_TIMESTAMP}"
 }
 
 # ---------------------------------------------------------------------------
@@ -129,7 +207,8 @@ log "  keymap                = ${VOID_KEYMAP}"
 #          Writing to /output from the start avoids a final cp that would
 #          require 2× the image size on disk.
 # ---------------------------------------------------------------------------
-VOID_OUTPUT_IMAGE_NAME="void-linux-encrypted-$(date +%Y%m%d-%H%M%S).img"
+VOID_BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+VOID_OUTPUT_IMAGE_NAME="voidlinux_fde_${VOID_TARGET_ARCH}_${VOID_BUILD_TIMESTAMP}.img"
 VOID_DISK_IMAGE_PATH="${OUTPUT_DIR}/${VOID_OUTPUT_IMAGE_NAME}"
 
 log "Creating ${VOID_DISK_SIZE_MIB} MiB disk image at ${VOID_DISK_IMAGE_PATH}..."
@@ -243,36 +322,65 @@ mkdir -p "${VOID_INSTALL_MOUNT}/boot/efi"
 mount "${VOID_EFI_PARTITION}" "${VOID_INSTALL_MOUNT}/boot/efi"
 
 # ---------------------------------------------------------------------------
-# Step 8 — Bootstrap a minimal VoidLinux installation.
+# Step 8 — Run all required setup for a bootable system.
 # ---------------------------------------------------------------------------
-log "Bootstrapping VoidLinux base system (void-bootstrap.sh)..."
-export VOID_INSTALL_MOUNT VOID_XBPS_REPOSITORY
-bash /setup/void-bootstrap.sh
-
-# ---------------------------------------------------------------------------
-# Step 9 — Configure the system inside xchroot.
-# ---------------------------------------------------------------------------
-log "Copying installation scripts into chroot..."
-cp /setup/void-setup-minimal.sh "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh"
-cp /setup/void-setup-extras.sh  "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"
-chmod +x \
-    "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh" \
-    "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"
-
-# All VOID_* and password variables are exported so that the installation
-# scripts can read them from their environment without any additional argument
-# passing.
+export VOID_INSTALL_MOUNT VOID_XBPS_REPOSITORY VOID_TARGET_ARCH
 export VOID_HOSTNAME VOID_USERNAME VOID_TIMEZONE VOID_LOCALE VOID_KEYMAP
 export VOID_EFI_PARTITION VOID_LUKS_PARTITION
 export VOID_LUKS_DEVICE_NAME VOID_LVM_VG_NAME
 export VOID_LVM_ROOT_LV_NAME VOID_LVM_SWAP_LV_NAME
 export ROOT_PASSWORD USER_PASSWORD LUKS_PASSWORD
 
-log "Running void-setup-minimal.sh inside xchroot..."
+# ---------------------------------------------------------------------------
+# Step 8a — Install base packages.
+# ---------------------------------------------------------------------------
+log "Installing base packages into ${VOID_INSTALL_MOUNT}..."
+log "  (Downloads from ${VOID_XBPS_REPOSITORY} — may take a while.)"
+
+mkdir -p "${VOID_INSTALL_MOUNT}/var/db/xbps/keys"
+cp /var/db/xbps/keys/* "${VOID_INSTALL_MOUNT}/var/db/xbps/keys/"
+
+XBPS_ARCH="${VOID_TARGET_ARCH}" xbps-install \
+    -y \
+    -i \
+    -S \
+    -r "${VOID_INSTALL_MOUNT}" \
+    --repository="${VOID_XBPS_REPOSITORY}" \
+    base-system \
+    grub-x86_64-efi \
+    efibootmgr \
+    cryptsetup \
+    lvm2 \
+    dracut
+
+log "Base package installation complete."
+report_phase_usage "base package installation"
+
+# ---------------------------------------------------------------------------
+# Step 8b — Run minimal system configuration inside xchroot.
+# ---------------------------------------------------------------------------
+log "Copying minimal setup script into chroot..."
+cp /setup/void-setup-minimal.sh "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh"
+chmod +x "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh"
+
+log "Running minimal system configuration inside xchroot..."
 xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-setup-minimal.sh
+report_phase_usage "minimal system setup"
+
+# ---------------------------------------------------------------------------
+# Step 9 — Configure the system inside xchroot.
+# ---------------------------------------------------------------------------
+log "Copying extra customisation script into chroot..."
+cp /setup/void-setup-extras.sh  "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"
+chmod +x "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"
 
 log "Running void-setup-extras.sh inside xchroot..."
 xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-setup-extras.sh
+report_phase_usage "extra setup"
 
-log "Done.  Flash ${VOID_OUTPUT_IMAGE_NAME} to a ${VOID_DISK_SIZE_MIB} MiB (or larger) device"
-log "using Balena Etcher or: sudo dd if=output/${VOID_OUTPUT_IMAGE_NAME} of=/dev/sdX bs=4M status=progress"
+VOID_FINAL_IMAGE_NAME=$(build_final_image_name "${VOID_LAST_FILES_USED_BYTES}")
+VOID_BUILD_COMPLETED=1
+
+log "Final image name after cleanup will be ${VOID_FINAL_IMAGE_NAME}"
+log "Done. Flash ${VOID_FINAL_IMAGE_NAME} to a ${VOID_DISK_SIZE_MIB} MiB (or larger) device"
+log "using Balena Etcher or: sudo dd if=output/${VOID_FINAL_IMAGE_NAME} of=/dev/sdX bs=4M status=progress"

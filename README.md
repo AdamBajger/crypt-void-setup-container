@@ -64,7 +64,16 @@ sudo ./tools/get-device-spec.sh /dev/sdX > config/disk.yaml
 docker compose --env-file .env run --rm void-setup
 ```
 
-The finished image is saved to `output/void-linux-encrypted-<timestamp>.img`.
+The finished image is saved to `output/voidlinux_fde_x86_64_du<files-used-gib>gib_<timestamp>.img`.
+
+During the run, the installer logs disk usage twice:
+
+- after the required bootable-system setup finishes
+- after the optional extras step finishes
+
+The log includes both `files_used_total` (root + EFI files actually written)
+and `image_space_consumed` (the current image footprint including fixed layout
+overhead such as swap reservation and filesystem metadata).
 
 ### 5 — Flash the image
 
@@ -127,14 +136,13 @@ See `examples/` for pre-computed sizes for 16 GB, 128 GB, and 256 GB devices.
 
 ## Customising the installation
 
-The `scripts/` directory contains three scripts that run in order:
+The `scripts/` directory contains two scripts that run in order:
 
 | Script | Runs in | Purpose |
 |--------|---------|---------|
-| `void-bootstrap.sh` | host (outside chroot) | Installs the base package set into the target rootfs |
-| `void-setup-minimal.sh` | inside `xchroot` | Everything required for a bootable system (hostname, locale, fstab, crypttab, dracut, GRUB, users, runit services) |
+| `void-setup-minimal.sh` | inside `xchroot` | All configuration required for a bootable system (hostname, locale, fstab, crypttab, dracut, GRUB, users, runit services) |
 | `void-setup-extras.sh` | inside `xchroot` | **Your customisations** — extra packages, services, dotfiles, etc. |
 
 To add packages or configuration, edit `scripts/void-setup-extras.sh`.  
-To change the base package set installed before the chroot, edit `scripts/void-bootstrap.sh`.  
-The minimal setup in `scripts/void-setup-minimal.sh` should rarely need to be changed.
+To change the required boot configuration, edit `scripts/void-setup-minimal.sh`.  
+To change the base package set installed before the chroot, edit `scripts/entrypoint.sh` (Step 8a).

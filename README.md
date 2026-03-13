@@ -97,6 +97,9 @@ sudo dd if=output/IMAGE_FILE.img of=/dev/sdX bs=4M conv=fsync status=progress
   `EFI/BOOT/BOOTX64.EFI`, which is the right layout for removable media.
 - `GRUB_ENABLE_CRYPTODISK=y` is enabled so GRUB can unlock the encrypted
   container and read the kernel/initramfs from encrypted `/boot`.
+- The installed GRUB EFI binary preloads `part_gpt`, `fat`, `ext2`, `normal`,
+  `cryptodisk`, `luks`, and `lvm` so it can reach an encrypted `/boot`
+  without depending on additional modules being loaded from disk first.
 - Secure Boot is **not** configured.
 - A real boot test is still required before relying on the image.
 

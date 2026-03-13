@@ -154,10 +154,13 @@ log "Installing GRUB to EFI partition..."
 # --removable  : install to the fallback EFI path (EFI/BOOT/BOOTX64.EFI) so
 #                the device boots on any machine without a pre-existing NVRAM
 #                entry — essential for removable storage like SD cards.
+# --modules    : preload the partition, filesystem, crypto, and LVM modules
+#                needed to reach /boot when it lives inside LUKS-on-LVM.
 grub-install \
     --target=x86_64-efi \
     --efi-directory=/boot/efi \
     --bootloader-id=void-linux \
+    --modules="part_gpt fat ext2 normal cryptodisk luks lvm" \
     --no-nvram \
     --removable \
     --recheck

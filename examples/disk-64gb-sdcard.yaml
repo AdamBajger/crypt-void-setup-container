@@ -1,9 +1,11 @@
 # Disk layout configuration — target: 64 GB micro SD card.
 #
 # All sizes are in mebibytes (MiB).
-# 61440 MiB ≈ 60 GiB, fitting safely on a 64 GB micro SD card.
+# 61440 MiB = 60 GiB ≈ 57.2 GB, fitting safely on a 64 GB micro SD card.
 # This matches the default config/disk.yaml.
+#
+# IMPORTANT: values are MiB (1024-based), NOT MB (1000-based).
 
-disk_size_mb: 61440
-efi_partition_size_mb: 512
-swap_size_mb: 4096
+disk_size_mib: 61440
+efi_partition_size_mib: 512
+swap_size_mib: 4096

@@ -30,7 +30,7 @@ cd crypt-void-setup-container
 mkdir -p output
 
 cp .env.example .env
-$EDITOR .env          # set LUKS_PASSWORD, ROOT_PASSWORD, USER_PASSWORD
+$EDITOR .env          # set the three required passwords (see .env.example)
 ```
 
 The build will fail immediately if any of those three values are left empty.
@@ -64,7 +64,16 @@ sudo ./tools/get-device-spec.sh /dev/sdX > config/disk.yaml
 docker compose --env-file .env run --rm void-setup
 ```
 
-The finished image is saved to `output/void-linux-encrypted-<timestamp>.img`.
+The finished image is saved to `output/voidlinux_fde_x86_64_du<files-used-gib>gib_<timestamp>.img`.
+
+During the run, the installer logs disk usage twice:
+
+- after the required bootable-system setup finishes
+- after the optional extras step finishes
+
+The log includes both `files_used_total` (root + EFI files actually written)
+and `image_space_consumed` (the current image footprint including fixed layout
+overhead such as swap reservation and filesystem metadata).
 
 ### 5 — Flash the image
 
@@ -88,6 +97,9 @@ sudo dd if=output/IMAGE_FILE.img of=/dev/sdX bs=4M conv=fsync status=progress
   `EFI/BOOT/BOOTX64.EFI`, which is the right layout for removable media.
 - `GRUB_ENABLE_CRYPTODISK=y` is enabled so GRUB can unlock the encrypted
   container and read the kernel/initramfs from encrypted `/boot`.
+- The installed GRUB EFI binary preloads `part_gpt`, `fat`, `ext2`, `normal`,
+  `cryptodisk`, `luks`, and `lvm` so it can reach an encrypted `/boot`
+  without depending on additional modules being loaded from disk first.
 - Secure Boot is **not** configured.
 - A real boot test is still required before relying on the image.
 
@@ -99,9 +111,9 @@ sudo dd if=output/IMAGE_FILE.img of=/dev/sdX bs=4M conv=fsync status=progress
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `disk_size_mb` | `61440` | Total image size (61440 MiB ≈ 60 GiB fits a 64 GB card) |
-| `efi_partition_size_mb` | `512` | EFI System Partition (FAT32, `/boot/efi`) |
-| `swap_size_mb` | `4096` | Swap logical volume inside the encrypted LVM group |
+| `disk_size_mib` | `61440` | Total image size in MiB (61440 MiB = 60 GiB fits a 64 GB card) |
+| `efi_partition_size_mib` | `512` | EFI System Partition (FAT32, `/boot/efi`) |
+| `swap_size_mib` | `4096` | Swap logical volume inside the encrypted LVM group |
 
 See `examples/` for pre-computed sizes for 16 GB, 128 GB, and 256 GB devices.
 
@@ -120,13 +132,45 @@ See `examples/` for pre-computed sizes for 16 GB, 128 GB, and 256 GB devices.
 | Variable | Description |
 |----------|-------------|
 | `LUKS_PASSWORD` | LUKS1 encryption passphrase |
-| `ROOT_PASSWORD` | Password for the `root` account |
-| `USER_PASSWORD` | Password for the regular user account |
+| `ROOT_PASSWORD` | Passphrase for the `root` account |
+| `USER_PASSWORD` | Passphrase for the regular user account |
 
 ---
 
 ## Customising the installation
 
-Edit `void-installation-script.sh` to add packages, configure services, or
-install dotfiles. The script runs inside `xchroot` after the base system is
-bootstrapped and has full access to `xbps-install` and all VoidLinux tools.
+The `scripts/` directory contains two scripts that run in order:
+
+| Script | Runs in | Purpose |
+|--------|---------|---------|
+| `void-setup-minimal.sh` | inside `xchroot` | All configuration required for a bootable system (hostname, locale, fstab, crypttab, dracut, GRUB, users, runit services) |
+| `void-setup-extras.sh` | inside `xchroot` | **Your customisations** — extra packages, services, dotfiles, etc. |
+
+To add packages or configuration, edit `scripts/void-setup-extras.sh`.  
+To change the required boot configuration, edit `scripts/void-setup-minimal.sh`.  
+To change the base package set installed before the chroot, edit `scripts/entrypoint.sh` (Step 8a).
+
+---
+
+## Tests
+
+This repository includes a lightweight shell-based test suite scaffold under
+`tests/` so additional checks can be added over time.
+
+Run all tests:
+
+```bash
+sudo ./tests/run.sh
+```
+
+Run against a specific image:
+
+```bash
+sudo ./tests/run.sh output/IMAGE_FILE.img
+```
+
+The current integration test verifies that the generated
+`EFI/BOOT/BOOTX64.EFI` contains the required module names for encrypted
+LUKS+LVM `/boot` flows (`part_gpt fat ext2 normal cryptodisk luks lvm`).
+
+See `tests/README.md` for details and extension guidance.

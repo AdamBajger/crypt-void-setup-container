@@ -1,18 +1,19 @@
 # Audit log
 
-This document records a code review of the repository as it exists in this PR.
+This document records a code review of the repository as it currently stands.
 It is an assessment of whether the generated image should be flashable and
 bootable, plus the places where real-hardware testing is still required.
 
 ## Scope reviewed
 
-- `/home/runner/work/crypt-void-setup-container/crypt-void-setup-container/Dockerfile`
-- `/home/runner/work/crypt-void-setup-container/crypt-void-setup-container/docker-compose.yml`
-- `/home/runner/work/crypt-void-setup-container/crypt-void-setup-container/scripts/entrypoint.sh`
-- `/home/runner/work/crypt-void-setup-container/crypt-void-setup-container/scripts/void-installation-script.sh`
-- `/home/runner/work/crypt-void-setup-container/crypt-void-setup-container/config/disk.yaml`
-- `/home/runner/work/crypt-void-setup-container/crypt-void-setup-container/config/system.yaml`
-- `/home/runner/work/crypt-void-setup-container/crypt-void-setup-container/tools/get-device-spec.sh`
+- `Dockerfile`
+- `docker-compose.yml`
+- `scripts/entrypoint.sh`
+- `scripts/void-setup-minimal.sh`
+- `scripts/void-setup-extras.sh`
+- `config/disk.yaml`
+- `config/system.yaml`
+- `tools/get-device-spec.sh`
 
 ## Verdict
 
@@ -51,11 +52,12 @@ The expected boot chain is:
 The current scripts explicitly support each step:
 
 - GPT + ESP creation: `scripts/entrypoint.sh`
+- Base package installation: `scripts/entrypoint.sh` (Step 8a)
 - LUKS + LVM provisioning: `scripts/entrypoint.sh`
-- `/etc/crypttab` generation: `scripts/void-installation-script.sh`
-- GRUB EFI removable install: `scripts/void-installation-script.sh`
+- `/etc/crypttab` generation: `scripts/void-setup-minimal.sh`
+- GRUB EFI removable install: `scripts/void-setup-minimal.sh`
 - initramfs regeneration after dracut config changes:
-  `scripts/void-installation-script.sh`
+  `scripts/void-setup-minimal.sh`
 
 ## Cross-check against the Void Linux docs
 
@@ -89,6 +91,12 @@ more closely for full-disk encryption behavior.
 - Set `hostonly="no"` in dracut configuration so the generated initramfs is
   generic enough for removable media and not tied to the container build
   environment.
+- Refactored scripts so `entrypoint.sh` orchestrates base package installation
+  and the chroot boundary, while `void-setup-minimal.sh` (chroot-only) handles
+  the required system configuration, and `void-setup-extras.sh` remains the
+  optional customisation layer.
+- Renamed YAML disk size fields from `_mb` to `_mib` to clarify that values
+  are 1024-based mebibytes, preventing accidental ~4.9 % image size inflation.
 
 That last change is important for bootability: a host-only initramfs is a poor
 fit for an image that is meant to be flashed onto another device and booted on
@@ -165,7 +173,8 @@ Before saying the image is fully proven, run this on real hardware:
 ## Validation performed for this PR
 
 - `bash -n scripts/entrypoint.sh`
-- `bash -n scripts/void-installation-script.sh`
+- `bash -n scripts/void-setup-minimal.sh`
+- `bash -n scripts/void-setup-extras.sh`
 - `bash -n tools/get-device-spec.sh`
 - `docker compose config`
 

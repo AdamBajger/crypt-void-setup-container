@@ -1,8 +1,22 @@
 #!/bin/bash
-# void-installation-script.sh — VoidLinux system configuration script.
+# void-setup-minimal.sh — Minimal system configuration for a bootable
+# VoidLinux installation.
 #
-# This script runs INSIDE the xchroot environment set up by entrypoint.sh.
-# It receives its configuration through environment variables exported by
+# This script runs INSIDE the xchroot environment, called from entrypoint.sh
+# after the base packages have been installed and the target rootfs has been
+# mounted. It covers everything that is strictly necessary for the system to
+# boot and be accessible:
+#
+#   • Hostname, timezone, locale, console keymap
+#   • Root password and regular-user account
+#   • /etc/fstab  (all partitions / logical volumes by UUID)
+#   • /etc/crypttab  (LUKS unlock entry)
+#   • dracut configuration  (crypt + lvm modules, hostonly=no, crypttab embedded)
+#   • GRUB installation and configuration  (GRUB_ENABLE_CRYPTODISK=y)
+#   • Essential runit service links
+#   • xbps-reconfigure -fa  (triggers dracut to regenerate the initramfs)
+#
+# Receives its configuration through environment variables exported by
 # entrypoint.sh:
 #
 #   VOID_HOSTNAME        — system hostname
@@ -16,21 +30,13 @@
 #   VOID_LVM_VG_NAME       — LVM volume group name
 #   VOID_LVM_ROOT_LV_NAME  — root logical volume name
 #   VOID_LVM_SWAP_LV_NAME  — swap logical volume name
-#   LUKS_PASSWORD        — LUKS passphrase (used only if you add an additional
-#                          keyslot or need to reference it here)
 #   ROOT_PASSWORD        — password for the root account
 #   USER_PASSWORD        — password for VOID_USERNAME
-#
-# Customise this file freely.  It is the single place for any adjustments to
-# the installed system — additional packages, extra services, dotfiles, etc.
 
 set -euo pipefail
 
-log() { echo "[void-install] $*"; }
+log() { echo "[void-setup-minimal] $*"; }
 
-# ---------------------------------------------------------------------------
-# Hostname
-# ---------------------------------------------------------------------------
 log "Setting hostname to ${VOID_HOSTNAME}..."
 echo "${VOID_HOSTNAME}" > /etc/hostname
 
@@ -63,6 +69,12 @@ log "Setting console keymap to ${VOID_KEYMAP}..."
 echo "KEYMAP=${VOID_KEYMAP}" > /etc/vconsole.conf
 
 # ---------------------------------------------------------------------------
+# Install runtime services
+# ---------------------------------------------------------------------------
+log "Installing runtime services (dhcpcd, openssh)..."
+XBPS_ARCH="${VOID_TARGET_ARCH}" xbps-install -y dhcpcd openssh
+
+# ---------------------------------------------------------------------------
 # Root password
 # ---------------------------------------------------------------------------
 log "Setting root password..."
@@ -83,7 +95,6 @@ echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel-sudo
 # /etc/fstab
 # ---------------------------------------------------------------------------
 log "Generating /etc/fstab..."
-
 VOID_EFI_UUID=$(blkid -s UUID -o value "${VOID_EFI_PARTITION}")
 VOID_ROOT_UUID=$(blkid -s UUID -o value \
     "/dev/${VOID_LVM_VG_NAME}/${VOID_LVM_ROOT_LV_NAME}")
@@ -102,7 +113,6 @@ FSTAB
 # /etc/crypttab
 # ---------------------------------------------------------------------------
 log "Generating /etc/crypttab..."
-
 VOID_LUKS_UUID=$(blkid -s UUID -o value "${VOID_LUKS_PARTITION}")
 
 cat > /etc/crypttab << CRYPTTAB
@@ -144,10 +154,13 @@ log "Installing GRUB to EFI partition..."
 # --removable  : install to the fallback EFI path (EFI/BOOT/BOOTX64.EFI) so
 #                the device boots on any machine without a pre-existing NVRAM
 #                entry — essential for removable storage like SD cards.
+# --modules    : preload the partition, filesystem, crypto, and LVM modules
+#                needed to reach /boot when it lives inside LUKS-on-LVM.
 grub-install \
     --target=x86_64-efi \
     --efi-directory=/boot/efi \
     --bootloader-id=void-linux \
+    --modules="part_gpt fat ext2 normal cryptodisk luks lvm" \
     --no-nvram \
     --removable \
     --recheck
@@ -171,4 +184,4 @@ ln -sf /etc/sv/sshd   /etc/runit/runsvdir/default/
 log "Reconfiguring all installed packages (this regenerates the initramfs)..."
 xbps-reconfigure -fa
 
-log "VoidLinux installation configuration complete."
+log "Minimal system setup complete."

@@ -149,3 +149,28 @@ The `scripts/` directory contains two scripts that run in order:
 To add packages or configuration, edit `scripts/void-setup-extras.sh`.  
 To change the required boot configuration, edit `scripts/void-setup-minimal.sh`.  
 To change the base package set installed before the chroot, edit `scripts/entrypoint.sh` (Step 8a).
+
+---
+
+## Tests
+
+This repository includes a lightweight shell-based test suite scaffold under
+`tests/` so additional checks can be added over time.
+
+Run all tests:
+
+```bash
+sudo ./tests/run.sh
+```
+
+Run against a specific image:
+
+```bash
+sudo ./tests/run.sh output/IMAGE_FILE.img
+```
+
+The current integration test verifies that the generated
+`EFI/BOOT/BOOTX64.EFI` contains the required module names for encrypted
+LUKS+LVM `/boot` flows (`part_gpt fat ext2 normal cryptodisk luks lvm`).
+
+See `tests/README.md` for details and extension guidance.

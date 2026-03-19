@@ -1,4 +1,4 @@
-FROM voidlinux/voidlinux:latest
+FROM ghcr.io/void-linux/void-glibc
 
 ARG VOID_XBPS_REPOSITORY="https://repo-default.voidlinux.org/current"
 
@@ -15,8 +15,6 @@ RUN xbps-install -iyuS \
         dosfstools \
         e2fsprogs \
         util-linux \
-        python3 \
-        python3-yaml \
         xtools \
         xbps && \
     rm -rf /var/cache/xbps/*

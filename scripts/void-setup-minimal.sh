@@ -72,7 +72,9 @@ echo "KEYMAP=${VOID_KEYMAP}" > /etc/vconsole.conf
 # Install runtime services
 # ---------------------------------------------------------------------------
 log "Installing runtime services (dhcpcd, openssh)..."
-XBPS_ARCH="${VOID_TARGET_ARCH}" xbps-install -y dhcpcd openssh
+XBPS_ARCH="${VOID_TARGET_ARCH}" xbps-install -y \
+    --repository="${VOID_XBPS_REPOSITORY}" \
+    dhcpcd openssh
 
 # ---------------------------------------------------------------------------
 # Root password

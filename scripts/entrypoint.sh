@@ -3,7 +3,7 @@
 #
 # This script runs inside the VoidLinux Docker container and performs the full
 # pipeline:
-#   1. Parse YAML configuration files.
+#   1. Parse basic key=value configuration files.
 #   2. Create a loopback disk image in the output directory.
 #   3. Partition the image (GPT: EFI + LUKS).
 #   4. Set up LUKS1 encryption with PBKDF2 on the second partition.
@@ -18,8 +18,10 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Hard-coded names — kept verbose and consistent for maximum readability.
 # ---------------------------------------------------------------------------
-readonly DISK_CONFIG_FILE="/config/disk.yaml"
-readonly SYSTEM_CONFIG_FILE="/config/system.yaml"
+readonly DISK_CONFIG_FILE="/config/disk.conf"
+readonly SYSTEM_CONFIG_FILE="/config/system.conf"
+readonly CONFIG_LOGIC_FILE="/setup/config-loader.sh"
+readonly REPORTING_LOGIC_FILE="/setup/reporting.sh"
 readonly OUTPUT_DIR="/output"
 
 readonly VOID_LUKS_DEVICE_NAME="void-luks"
@@ -32,7 +34,7 @@ readonly VOID_LVM_SWAP_LV_NAME="void-swap"
 readonly VOID_INSTALL_MOUNT="/mnt/void-install"
 
 readonly VOID_TARGET_ARCH="x86_64"
-readonly VOID_XBPS_REPOSITORY="https://repo-default.voidlinux.org/current"
+readonly VOID_XBPS_REPOSITORY="${VOID_XBPS_REPOSITORY:-https://repo-default.voidlinux.org/current}"
 
 # Partition indices within the loop device.
 readonly VOID_EFI_PARTITION_INDEX=1
@@ -91,81 +93,11 @@ ensure_loop_nodes() {
     done
 }
 
-get_yaml_value() {
-    local yaml_file="$1"
-    local key="$2"
-    python3 - "$yaml_file" "$key" <<'PYEOF'
-import sys, yaml
-data = yaml.safe_load(open(sys.argv[1]))
-value = data.get(sys.argv[2], "")
-if value == "" or value is None:
-    sys.exit(f"Key '{sys.argv[2]}' not found or empty in {sys.argv[1]}")
-print(value)
-PYEOF
-}
+# shellcheck source=/setup/config-loader.sh
+source "${CONFIG_LOGIC_FILE}"
 
-bytes_to_mib() {
-    awk -v bytes="$1" 'BEGIN { printf "%.2f", bytes / 1048576 }'
-}
-
-bytes_to_gib() {
-    awk -v bytes="$1" 'BEGIN { printf "%.2f", bytes / 1073741824 }'
-}
-
-get_df_value_bytes() {
-    local mount_path="$1"
-    local field_name="$2"
-
-    df -B1P "${mount_path}" | awk -v field_name="${field_name}" '
-        NR == 2 {
-            if (field_name == "size") {
-                print $2
-            } else if (field_name == "used") {
-                print $3
-            } else if (field_name == "avail") {
-                print $4
-            }
-        }
-    '
-}
-
-report_phase_usage() {
-    local phase_label="$1"
-    local root_size_bytes root_used_bytes root_avail_bytes
-    local efi_size_bytes efi_used_bytes efi_avail_bytes
-    local files_used_bytes image_consumed_bytes image_total_bytes
-
-    root_size_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}" size)
-    root_used_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}" used)
-    root_avail_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}" avail)
-
-    efi_size_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}/boot/efi" size)
-    efi_used_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}/boot/efi" used)
-    efi_avail_bytes=$(get_df_value_bytes "${VOID_INSTALL_MOUNT}/boot/efi" avail)
-
-    files_used_bytes=$((root_used_bytes + efi_used_bytes))
-    image_total_bytes=$(blockdev --getsize64 "${VOID_LOOP_DEVICE}")
-    image_consumed_bytes=$((image_total_bytes - root_avail_bytes - efi_avail_bytes))
-    VOID_LAST_FILES_USED_BYTES="${files_used_bytes}"
-
-    log "Disk usage after ${phase_label}:"
-    log "  root_fs_used          = ${root_used_bytes} bytes ($(bytes_to_mib "${root_used_bytes}") MiB, $(bytes_to_gib "${root_used_bytes}") GiB)"
-    log "  root_fs_free          = ${root_avail_bytes} bytes ($(bytes_to_mib "${root_avail_bytes}") MiB, $(bytes_to_gib "${root_avail_bytes}") GiB)"
-    log "  root_fs_size          = ${root_size_bytes} bytes ($(bytes_to_mib "${root_size_bytes}") MiB, $(bytes_to_gib "${root_size_bytes}") GiB)"
-    log "  efi_fs_used           = ${efi_used_bytes} bytes ($(bytes_to_mib "${efi_used_bytes}") MiB, $(bytes_to_gib "${efi_used_bytes}") GiB)"
-    log "  efi_fs_free           = ${efi_avail_bytes} bytes ($(bytes_to_mib "${efi_avail_bytes}") MiB, $(bytes_to_gib "${efi_avail_bytes}") GiB)"
-    log "  efi_fs_size           = ${efi_size_bytes} bytes ($(bytes_to_mib "${efi_size_bytes}") MiB, $(bytes_to_gib "${efi_size_bytes}") GiB)"
-    log "  files_used_total      = ${files_used_bytes} bytes ($(bytes_to_mib "${files_used_bytes}") MiB, $(bytes_to_gib "${files_used_bytes}") GiB)"
-    log "  image_space_consumed  = ${image_consumed_bytes} bytes ($(bytes_to_mib "${image_consumed_bytes}") MiB, $(bytes_to_gib "${image_consumed_bytes}") GiB)"
-}
-
-build_final_image_name() {
-    local files_used_bytes="$1"
-    local files_used_gib
-
-    files_used_gib=$(bytes_to_gib "${files_used_bytes}")
-    printf 'voidlinux_fde_%s_du%sgib_%s.img' "${VOID_TARGET_ARCH}" "${files_used_gib}" "${VOID_BUILD_TIMESTAMP}"
-}
+# shellcheck source=/setup/reporting.sh
+source "${REPORTING_LOGIC_FILE}"
 
 # ---------------------------------------------------------------------------
 # Step 0 — Validate required environment variables.
@@ -179,19 +111,29 @@ log "Ensuring loop device nodes are present..."
 ensure_loop_nodes
 
 # ---------------------------------------------------------------------------
-# Step 1 — Parse YAML configuration.
+# Step 1 — Parse configuration.
 # ---------------------------------------------------------------------------
 log "Reading disk configuration from ${DISK_CONFIG_FILE}..."
-VOID_DISK_SIZE_MIB=$(get_yaml_value "${DISK_CONFIG_FILE}" "disk_size_mib")
-VOID_EFI_PARTITION_SIZE_MIB=$(get_yaml_value "${DISK_CONFIG_FILE}" "efi_partition_size_mib")
-VOID_SWAP_SIZE_MIB=$(get_yaml_value "${DISK_CONFIG_FILE}" "swap_size_mib")
+load_config_file "${DISK_CONFIG_FILE}"
+require_config_key "disk_size_mib"
+require_config_key "efi_partition_size_mib"
+require_config_key "swap_size_mib"
+VOID_DISK_SIZE_MIB="${disk_size_mib}"
+VOID_EFI_PARTITION_SIZE_MIB="${efi_partition_size_mib}"
+VOID_SWAP_SIZE_MIB="${swap_size_mib}"
 
 log "Reading system configuration from ${SYSTEM_CONFIG_FILE}..."
-VOID_HOSTNAME=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "hostname")
-VOID_USERNAME=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "username")
-VOID_TIMEZONE=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "timezone")
-VOID_LOCALE=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "locale")
-VOID_KEYMAP=$(get_yaml_value "${SYSTEM_CONFIG_FILE}" "keymap")
+load_config_file "${SYSTEM_CONFIG_FILE}"
+require_config_key "hostname"
+require_config_key "username"
+require_config_key "timezone"
+require_config_key "locale"
+require_config_key "keymap"
+VOID_HOSTNAME="${hostname}"
+VOID_USERNAME="${username}"
+VOID_TIMEZONE="${timezone}"
+VOID_LOCALE="${locale}"
+VOID_KEYMAP="${keymap}"
 
 log "  disk_size_mib          = ${VOID_DISK_SIZE_MIB}"
 log "  efi_partition_size_mib = ${VOID_EFI_PARTITION_SIZE_MIB}"

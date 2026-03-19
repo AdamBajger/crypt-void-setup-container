@@ -1,6 +1,9 @@
 services:
   void-setup:
-    build: .
+    build:
+      context: .
+      args:
+        - VOID_XBPS_REPOSITORY=${VOID_XBPS_REPOSITORY:-https://repo-default.voidlinux.org/current}
     container_name: void-setup-container
     # Privileged mode is required for loop device management, dm-crypt, and LVM.
     privileged: true
@@ -17,3 +20,4 @@ services:
       - LUKS_PASSWORD=${LUKS_PASSWORD}
       - ROOT_PASSWORD=${ROOT_PASSWORD}
       - USER_PASSWORD=${USER_PASSWORD}
+      - VOID_XBPS_REPOSITORY=${VOID_XBPS_REPOSITORY:-https://repo-default.voidlinux.org/current}

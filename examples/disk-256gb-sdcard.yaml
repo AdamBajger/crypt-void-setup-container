@@ -1,8 +1,0 @@
-# Disk layout configuration — target: 256 GB micro SD card / USB drive.
-#
-# All sizes are in mebibytes (MiB).
-# 245760 MiB ≈ 240 GiB, fitting safely on a 256 GB device.
-
-disk_size_mb: 245760
-efi_partition_size_mb: 512
-swap_size_mb: 8192

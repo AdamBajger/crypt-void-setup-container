@@ -1,5 +1,5 @@
 #!/bin/bash
-# void-setup-extras.sh — Additional packages and customisation for the
+# void-setup-extras.sh - Additional packages and customisation for the
 # installed VoidLinux system.
 #
 # This script runs INSIDE the xchroot environment, called from
@@ -21,7 +21,7 @@ set -euo pipefail
 log() { echo "[void-setup-extras] $*"; }
 
 # ---------------------------------------------------------------------------
-# Extra packages — add your own below.
+# Extra packages - add your own below.
 # ---------------------------------------------------------------------------
 # Example: install a text editor and network tools.
 #
@@ -30,17 +30,17 @@ log() { echo "[void-setup-extras] $*"; }
 #     curl \
 #     wget
 
-log "No extra packages configured — skipping."
+log "No extra packages configured - skipping."
 
 # ---------------------------------------------------------------------------
-# Additional runit services — uncomment or add your own below.
+# Additional runit services - uncomment or add your own below.
 # ---------------------------------------------------------------------------
 # Example: enable ntpd for time synchronisation.
 #
 # ln -sf /etc/sv/ntpd /etc/runit/runsvdir/default/
 
 # ---------------------------------------------------------------------------
-# User dotfiles / configuration — add your own below.
+# User dotfiles / configuration - add your own below.
 # ---------------------------------------------------------------------------
 # Example: set a custom shell for the regular user.
 #

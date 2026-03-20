@@ -1,5 +1,5 @@
 #!/bin/bash
-# entrypoint.sh — Main orchestration script for the crypt-void-setup-container.
+# entrypoint.sh - Main orchestration script for the crypt-void-setup-container.
 #
 # This script runs inside the VoidLinux Docker container and performs the full
 # pipeline:
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Hard-coded names — kept verbose and consistent for maximum readability.
+# Hard-coded names - kept verbose and consistent for maximum readability.
 # ---------------------------------------------------------------------------
 readonly DISK_CONFIG_FILE="/config/disk.conf"
 readonly SYSTEM_CONFIG_FILE="/config/system.conf"
@@ -34,7 +34,7 @@ readonly VOID_LVM_SWAP_LV_NAME="void-swap"
 readonly VOID_INSTALL_MOUNT="/mnt/void-install"
 
 readonly VOID_TARGET_ARCH="x86_64"
-readonly VOID_XBPS_REPOSITORY="${VOID_XBPS_REPOSITORY:-https://repo-default.voidlinux.org/current}"
+VOID_XBPS_REPOSITORY="${VOID_XBPS_REPOSITORY:-https://repo-default.voidlinux.org/current}"
 
 # Partition indices within the loop device.
 readonly VOID_EFI_PARTITION_INDEX=1
@@ -48,7 +48,7 @@ VOID_DISK_IMAGE_PATH=""
 VOID_OUTPUT_IMAGE_NAME=""
 VOID_BUILD_TIMESTAMP=""
 VOID_BUILD_COMPLETED=0
-VOID_LAST_FILES_USED_BYTES=0
+VOID_LAST_FILES_USED_HR=""
 VOID_FINAL_IMAGE_NAME=""
 
 # ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ source "${CONFIG_LOGIC_FILE}"
 source "${REPORTING_LOGIC_FILE}"
 
 # ---------------------------------------------------------------------------
-# Step 0 — Validate required environment variables.
+# Step 0 - Validate required environment variables.
 # ---------------------------------------------------------------------------
 log "Validating environment variables..."
 [[ -n "${LUKS_PASSWORD:-}" ]] || die "LUKS_PASSWORD is required but not set"
@@ -111,7 +111,7 @@ log "Ensuring loop device nodes are present..."
 ensure_loop_nodes
 
 # ---------------------------------------------------------------------------
-# Step 1 — Parse configuration.
+# Step 1 - Parse configuration.
 # ---------------------------------------------------------------------------
 log "Reading disk configuration from ${DISK_CONFIG_FILE}..."
 load_config_file "${DISK_CONFIG_FILE}"
@@ -145,7 +145,7 @@ log "  locale                = ${VOID_LOCALE}"
 log "  keymap                = ${VOID_KEYMAP}"
 
 # ---------------------------------------------------------------------------
-# Step 2 — Create the loopback disk image directly in the output directory.
+# Step 2 - Create the loopback disk image directly in the output directory.
 #          Writing to /output from the start avoids a final cp that would
 #          require 2× the image size on disk.
 # ---------------------------------------------------------------------------
@@ -161,7 +161,7 @@ VOID_LOOP_DEVICE=$(losetup --find --show --partscan "${VOID_DISK_IMAGE_PATH}")
 log "  loop device = ${VOID_LOOP_DEVICE}"
 
 # ---------------------------------------------------------------------------
-# Step 3 — Partition the disk image (GPT layout targeting EFI systems).
+# Step 3 - Partition the disk image (GPT layout targeting EFI systems).
 # ---------------------------------------------------------------------------
 log "Partitioning disk image with GPT layout..."
 
@@ -204,12 +204,15 @@ VOID_LUKS_PARTITION=$(losetup --find --show \
     --sizelimit "$((LUKS_SIZE_SECTORS * SECTOR_SIZE))" \
     "${VOID_DISK_IMAGE_PATH}")
 
-log "  ${VOID_EFI_PARTITION}  — EFI System Partition (FAT32)"
-log "  ${VOID_LUKS_PARTITION} — LUKS1 encrypted partition (contains LVM)"
+log "  ${VOID_EFI_PARTITION}  -- EFI System Partition (FAT32)"
+log "  ${VOID_LUKS_PARTITION} -- LUKS1 encrypted partition (contains LVM)"
 
 # ---------------------------------------------------------------------------
-# Step 4 — Set up LUKS1 encryption with PBKDF2 on the LUKS partition.
+# Step 4 - Discard-wipe the LUKS partition, then set up LUKS1 + PBKDF2.
 # ---------------------------------------------------------------------------
+log "Discard-wiping ${VOID_LUKS_PARTITION} to reduce prior-data remanence..."
+blkdiscard -f "${VOID_LUKS_PARTITION}" || log "  (blkdiscard not supported on this platform, skipping)"
+
 log "Formatting ${VOID_LUKS_PARTITION} as LUKS1 with PBKDF2..."
 echo -n "${LUKS_PASSWORD}" | cryptsetup luksFormat \
     --type luks1 \
@@ -222,7 +225,7 @@ echo -n "${LUKS_PASSWORD}" | cryptsetup open \
     "${VOID_LUKS_PARTITION}" "${VOID_LUKS_DEVICE_NAME}" -
 
 # ---------------------------------------------------------------------------
-# Step 5 — Set up LVM inside the LUKS container.
+# Step 5 - Set up LVM inside the LUKS container.
 # ---------------------------------------------------------------------------
 log "Initialising LVM physical volume on ${VOID_LUKS_DEVICE_PATH}..."
 pvcreate "${VOID_LUKS_DEVICE_PATH}"
@@ -241,7 +244,7 @@ vgchange -ay "${VOID_LVM_VG_NAME}" >/dev/null
 vgmknodes "${VOID_LVM_VG_NAME}" >/dev/null || true
 
 # ---------------------------------------------------------------------------
-# Step 6 — Format all filesystems.
+# Step 6 - Format all filesystems.
 # ---------------------------------------------------------------------------
 log "Formatting EFI partition as FAT32..."
 mkfs.vfat -F32 -n VOID-EFI "${VOID_EFI_PARTITION}"
@@ -253,7 +256,7 @@ log "Setting up swap on swap logical volume..."
 mkswap -L void-swap "/dev/${VOID_LVM_VG_NAME}/${VOID_LVM_SWAP_LV_NAME}"
 
 # ---------------------------------------------------------------------------
-# Step 7 — Mount the filesystem tree.
+# Step 7 - Mount the filesystem tree.
 # ---------------------------------------------------------------------------
 log "Mounting root filesystem at ${VOID_INSTALL_MOUNT}..."
 mkdir -p "${VOID_INSTALL_MOUNT}"
@@ -264,7 +267,7 @@ mkdir -p "${VOID_INSTALL_MOUNT}/boot/efi"
 mount "${VOID_EFI_PARTITION}" "${VOID_INSTALL_MOUNT}/boot/efi"
 
 # ---------------------------------------------------------------------------
-# Step 8 — Run all required setup for a bootable system.
+# Step 8 - Run all required setup for a bootable system.
 # ---------------------------------------------------------------------------
 export VOID_INSTALL_MOUNT VOID_XBPS_REPOSITORY VOID_TARGET_ARCH
 export VOID_HOSTNAME VOID_USERNAME VOID_TIMEZONE VOID_LOCALE VOID_KEYMAP
@@ -274,10 +277,10 @@ export VOID_LVM_ROOT_LV_NAME VOID_LVM_SWAP_LV_NAME
 export ROOT_PASSWORD USER_PASSWORD LUKS_PASSWORD
 
 # ---------------------------------------------------------------------------
-# Step 8a — Install base packages.
+# Step 8a - Install base packages.
 # ---------------------------------------------------------------------------
 log "Installing base packages into ${VOID_INSTALL_MOUNT}..."
-log "  (Downloads from ${VOID_XBPS_REPOSITORY} — may take a while.)"
+log "  (Downloads from ${VOID_XBPS_REPOSITORY} - may take a while.)"
 
 mkdir -p "${VOID_INSTALL_MOUNT}/var/db/xbps/keys"
 cp /var/db/xbps/keys/* "${VOID_INSTALL_MOUNT}/var/db/xbps/keys/"
@@ -299,7 +302,7 @@ log "Base package installation complete."
 report_phase_usage "base package installation"
 
 # ---------------------------------------------------------------------------
-# Step 8b — Run minimal system configuration inside xchroot.
+# Step 8b - Run minimal system configuration inside xchroot.
 # ---------------------------------------------------------------------------
 log "Copying minimal setup script into chroot..."
 cp /setup/void-setup-minimal.sh "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh"
@@ -310,7 +313,7 @@ xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-setup-minimal.sh
 report_phase_usage "minimal system setup"
 
 # ---------------------------------------------------------------------------
-# Step 9 — Configure the system inside xchroot.
+# Step 9 - Configure the system inside xchroot.
 # ---------------------------------------------------------------------------
 log "Copying extra customisation script into chroot..."
 cp /setup/void-setup-extras.sh  "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"
@@ -320,7 +323,7 @@ log "Running void-setup-extras.sh inside xchroot..."
 xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-setup-extras.sh
 report_phase_usage "extra setup"
 
-VOID_FINAL_IMAGE_NAME=$(build_final_image_name "${VOID_LAST_FILES_USED_BYTES}")
+VOID_FINAL_IMAGE_NAME=$(build_final_image_name "${VOID_LAST_FILES_USED_HR}")
 VOID_BUILD_COMPLETED=1
 
 log "Final image name after cleanup will be ${VOID_FINAL_IMAGE_NAME}"

@@ -1,5 +1,5 @@
 #!/bin/bash
-# void-setup-minimal.sh — Minimal system configuration for a bootable
+# void-setup-minimal.sh - Minimal system configuration for a bootable
 # VoidLinux installation.
 #
 # This script runs INSIDE the xchroot environment, called from entrypoint.sh
@@ -19,19 +19,19 @@
 # Receives its configuration through environment variables exported by
 # entrypoint.sh:
 #
-#   VOID_HOSTNAME        — system hostname
-#   VOID_USERNAME        — name of the regular user to create
-#   VOID_TIMEZONE        — timezone (e.g. "Europe/Prague")
-#   VOID_LOCALE          — locale  (e.g. "en_US.UTF-8")
-#   VOID_KEYMAP          — keymap  (e.g. "us")
-#   VOID_EFI_PARTITION   — block device path of the EFI partition
-#   VOID_LUKS_PARTITION  — block device path of the LUKS partition
-#   VOID_LUKS_DEVICE_NAME  — dm name for the opened LUKS container
-#   VOID_LVM_VG_NAME       — LVM volume group name
-#   VOID_LVM_ROOT_LV_NAME  — root logical volume name
-#   VOID_LVM_SWAP_LV_NAME  — swap logical volume name
-#   ROOT_PASSWORD        — password for the root account
-#   USER_PASSWORD        — password for VOID_USERNAME
+#   VOID_HOSTNAME        - system hostname
+#   VOID_USERNAME        - name of the regular user to create
+#   VOID_TIMEZONE        - timezone (e.g. "Europe/Prague")
+#   VOID_LOCALE          - locale  (e.g. "en_US.UTF-8")
+#   VOID_KEYMAP          - keymap  (e.g. "us")
+#   VOID_EFI_PARTITION   - block device path of the EFI partition
+#   VOID_LUKS_PARTITION  - block device path of the LUKS partition
+#   VOID_LUKS_DEVICE_NAME  - dm name for the opened LUKS container
+#   VOID_LVM_VG_NAME       - LVM volume group name
+#   VOID_LVM_ROOT_LV_NAME  - root logical volume name
+#   VOID_LVM_SWAP_LV_NAME  - swap logical volume name
+#   ROOT_PASSWORD        - password for the root account
+#   USER_PASSWORD        - password for VOID_USERNAME
 
 set -euo pipefail
 
@@ -123,7 +123,7 @@ ${VOID_LUKS_DEVICE_NAME}  UUID=${VOID_LUKS_UUID}  none    luks,discard
 CRYPTTAB
 
 # ---------------------------------------------------------------------------
-# dracut — include crypt + lvm modules in the initramfs.
+# dracut - include crypt + lvm modules in the initramfs.
 # ---------------------------------------------------------------------------
 log "Configuring dracut for LUKS and LVM..."
 mkdir -p /etc/dracut.conf.d
@@ -134,14 +134,14 @@ install_items+=" /etc/crypttab "
 DRACUT
 
 # ---------------------------------------------------------------------------
-# GRUB — configure and install the EFI bootloader.
+# GRUB - configure and install the EFI bootloader.
 # ---------------------------------------------------------------------------
 log "Configuring GRUB..."
 
 # Kernel parameters passed to the initramfs:
-#   rd.luks.uuid  — tells dracut which LUKS partition to unlock.
-#   rd.lvm.vg     — activates the correct volume group after unlock.
-#   root          — the root device once LVM is active.
+#   rd.luks.uuid  - tells dracut which LUKS partition to unlock.
+#   rd.lvm.vg     - activates the correct volume group after unlock.
+#   root          - the root device once LVM is active.
 cat > /etc/default/grub << GRUBCONF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=5
@@ -155,7 +155,7 @@ log "Installing GRUB to EFI partition..."
 # --no-nvram   : do not write an NVRAM entry (not possible inside a chroot)
 # --removable  : install to the fallback EFI path (EFI/BOOT/BOOTX64.EFI) so
 #                the device boots on any machine without a pre-existing NVRAM
-#                entry — essential for removable storage like SD cards.
+#                entry - essential for removable storage like SD cards.
 # --modules    : preload the partition, filesystem, crypto, and LVM modules
 #                needed to reach /boot when it lives inside LUKS-on-LVM.
 grub-install \

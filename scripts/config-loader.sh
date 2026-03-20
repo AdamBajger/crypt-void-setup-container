@@ -1,5 +1,5 @@
 #!/bin/bash
-# config-loader.sh — Configuration loading and validation helpers for entrypoint.
+# config-loader.sh - Configuration loading and validation helpers for entrypoint.
 
 require_config_key() {
     local key="$1"

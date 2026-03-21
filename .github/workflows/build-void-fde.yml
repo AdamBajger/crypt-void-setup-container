@@ -33,33 +33,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ---------------------------------------------------------------------------
-      # Load kernel modules required for dm-crypt / LVM / loop devices.
-      # ubuntu-latest runners have these modules available.
-      # ---------------------------------------------------------------------------
       - name: Load required kernel modules
         run: |
-          sudo modprobe dm-mod   || echo "[ci] dm-mod already loaded or unavailable"
-          sudo modprobe dm-crypt || echo "[ci] dm-crypt already loaded or unavailable"
-          sudo modprobe loop     || echo "[ci] loop already loaded or unavailable"
-          lsmod | grep -E 'dm_mod|dm_crypt|loop' || true
+          sudo modprobe dm-mod
+          sudo modprobe dm-crypt
+          sudo modprobe loop
 
-      # ---------------------------------------------------------------------------
-      # Run the build inside a privileged Docker container.
-      # The image is built fresh from the Dockerfile on every run so that the
-      # toolchain is always consistent with what is committed to the repository.
-      # ---------------------------------------------------------------------------
       - name: Create output directory
         run: mkdir -p output
 
       - name: Build Docker image
         run: |
           docker build \
-            --build-arg VOID_XBPS_REPOSITORY="${VOID_XBPS_REPOSITORY:-https://repo-default.voidlinux.org/current}" \
+            --build-arg VOID_XBPS_REPOSITORY="${VOID_XBPS_REPOSITORY}" \
             -t void-fde-builder:ci \
             .
         env:
-          VOID_XBPS_REPOSITORY: ${{ vars.VOID_XBPS_REPOSITORY || 'https://repo-default.voidlinux.org/current' }}
+          VOID_XBPS_REPOSITORY: ${{ vars.VOID_XBPS_REPOSITORY }}
 
       - name: Run privileged build container
         run: |
@@ -78,17 +68,11 @@ jobs:
           LUKS_PASSWORD: ${{ secrets.LUKS_PASSWORD }}
           ROOT_PASSWORD: ${{ secrets.ROOT_PASSWORD }}
           USER_PASSWORD: ${{ secrets.USER_PASSWORD }}
-          VOID_XBPS_REPOSITORY: ${{ vars.VOID_XBPS_REPOSITORY || 'https://repo-default.voidlinux.org/current' }}
+          VOID_XBPS_REPOSITORY: ${{ vars.VOID_XBPS_REPOSITORY }}
 
-      # ---------------------------------------------------------------------------
-      # List the produced image so the build log shows what was created.
-      # ---------------------------------------------------------------------------
       - name: List produced artifacts
         run: ls -lh output/
 
-      # ---------------------------------------------------------------------------
-      # Upload the disk image as a workflow artifact (retained 30 days).
-      # ---------------------------------------------------------------------------
       - name: Upload disk image artifact
         uses: actions/upload-artifact@v4
         with:
@@ -97,10 +81,6 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      # ---------------------------------------------------------------------------
-      # Optional GitHub Release — triggered only when create_release input is
-      # "true" (workflow_dispatch) or when a version tag is pushed.
-      # ---------------------------------------------------------------------------
       - name: Get image filename for release
         if: >
           (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true') ||

@@ -1,0 +1,114 @@
+name: Build Void Linux FDE Image
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: "Create a GitHub Release with the built image"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build encrypted Void Linux image
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Load required kernel modules
+        run: |
+          sudo modprobe dm-mod
+          sudo modprobe dm-crypt
+          sudo modprobe loop
+
+      - name: Create output directory
+        run: mkdir -p output
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg VOID_XBPS_REPOSITORY="${VOID_XBPS_REPOSITORY}" \
+            -t void-fde-builder:ci \
+            .
+        env:
+          VOID_XBPS_REPOSITORY: ${{ vars.VOID_XBPS_REPOSITORY }}
+
+      - name: Run privileged build container
+        run: |
+          docker run --rm \
+            --privileged \
+            --device /dev/loop-control \
+            -v "$(pwd)/config:/config:ro" \
+            -v "$(pwd)/output:/output" \
+            -v "$(pwd)/scripts:/setup" \
+            -e LUKS_PASSWORD \
+            -e ROOT_PASSWORD \
+            -e USER_PASSWORD \
+            -e VOID_XBPS_REPOSITORY \
+            void-fde-builder:ci
+        env:
+          LUKS_PASSWORD: ${{ secrets.LUKS_PASSWORD }}
+          ROOT_PASSWORD: ${{ secrets.ROOT_PASSWORD }}
+          USER_PASSWORD: ${{ secrets.USER_PASSWORD }}
+          VOID_XBPS_REPOSITORY: ${{ vars.VOID_XBPS_REPOSITORY }}
+
+      - name: List produced artifacts
+        run: ls -lh output/
+
+      - name: Upload disk image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: void-fde-image-${{ github.run_number }}
+          path: output/voidlinux_fde_*.img
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Get image filename for release
+        if: >
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true') ||
+          (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+        id: image_name
+        run: |
+          img=$(ls output/voidlinux_fde_*.img | head -n1)
+          echo "path=${img}" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "${img}")" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: >
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true') ||
+          (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Void Linux FDE Image ${{ steps.image_name.outputs.name }}
+          tag_name: ${{ github.ref_name }}
+          files: ${{ steps.image_name.outputs.path }}
+          body: |
+            Encrypted Void Linux disk image built by GitHub Actions.
+
+            **Build:** `${{ github.run_id }}`
+            **Commit:** `${{ github.sha }}`
+
+            Flash to a USB drive or SD card with:
+            ```bash
+            sudo dd if=${{ steps.image_name.outputs.name }} of=/dev/sdX bs=4M status=progress
+            ```
+          draft: false
+          prerelease: false

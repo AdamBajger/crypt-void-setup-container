@@ -1,0 +1,43 @@
+name: Build (Docker Compose)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load kernel modules
+        run: |
+          sudo modprobe dm-mod
+          sudo modprobe dm-crypt
+          sudo modprobe loop
+
+      - name: Run build
+        run: |
+          mkdir -p output
+          docker compose run --rm void-setup
+        env:
+          LUKS_PASSWORD: ${{ secrets.LUKS_PASSWORD }}
+          ROOT_PASSWORD: ${{ secrets.ROOT_PASSWORD }}
+          USER_PASSWORD: ${{ secrets.USER_PASSWORD }}
+          VOID_XBPS_REPOSITORY: ${{ vars.VOID_XBPS_REPOSITORY }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: void-fde-image-docker-${{ github.run_number }}
+          path: output/voidlinux_fde_*.img
+          retention-days: 30
+          if-no-files-found: error

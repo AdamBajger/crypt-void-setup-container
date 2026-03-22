@@ -107,6 +107,11 @@ log "Validating environment variables..."
 [[ -n "${ROOT_PASSWORD:-}" ]] || die "ROOT_PASSWORD is required but not set"
 [[ -n "${USER_PASSWORD:-}" ]] || die "USER_PASSWORD is required but not set"
 
+log "Password variables before xchroot:"
+log "  ROOT_PASSWORD length: ${#ROOT_PASSWORD}"
+log "  USER_PASSWORD length: ${#USER_PASSWORD}"
+log "  LUKS_PASSWORD length: ${#LUKS_PASSWORD}"
+
 log "Ensuring loop device nodes are present..."
 ensure_loop_nodes
 
@@ -309,6 +314,9 @@ cp /setup/void-setup-minimal.sh "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh
 chmod +x "${VOID_INSTALL_MOUNT}/tmp/void-setup-minimal.sh"
 
 log "Running minimal system configuration inside xchroot..."
+log "Password variables before xchroot call:"
+log "  ROOT_PASSWORD length: ${#ROOT_PASSWORD}"
+log "  USER_PASSWORD length: ${#USER_PASSWORD}"
 xchroot "${VOID_INSTALL_MOUNT}" /tmp/void-setup-minimal.sh
 report_phase_usage "minimal system setup"
 

@@ -4,91 +4,149 @@
 #
 # This script runs INSIDE the xchroot environment, called from entrypoint.sh
 # after the base packages have been installed and the target rootfs has been
-# mounted. It covers everything that is strictly necessary for the system to
-# boot and be accessible:
-#
-#   • Hostname, timezone, locale, console keymap
-#   • Root password and regular-user account
-#   • /etc/fstab  (all partitions / logical volumes by UUID)
-#   • /etc/crypttab  (LUKS unlock entry)
-#   • dracut configuration  (crypt + lvm modules, hostonly=no, crypttab embedded)
-#   • GRUB installation and configuration  (GRUB_ENABLE_CRYPTODISK=y)
-#   • Essential runit service links
-#   • xbps-reconfigure -fa  (triggers dracut to regenerate the initramfs)
-#
-# Receives its configuration through environment variables exported by
-# entrypoint.sh:
-#
-#   VOID_HOSTNAME        - system hostname
-#   VOID_USERNAME        - name of the regular user to create
-#   VOID_TIMEZONE        - timezone (e.g. "Europe/Prague")
-#   VOID_LOCALE          - locale  (e.g. "en_US.UTF-8")
-#   VOID_KEYMAP          - keymap  (e.g. "us")
-#   VOID_EFI_PARTITION   - block device path of the EFI partition
-#   VOID_LUKS_PARTITION  - block device path of the LUKS partition
-#   VOID_LUKS_DEVICE_NAME  - dm name for the opened LUKS container
-#   VOID_LVM_VG_NAME       - LVM volume group name
-#   VOID_LVM_ROOT_LV_NAME  - root logical volume name
-#   VOID_LVM_SWAP_LV_NAME  - swap logical volume name
-#   ROOT_PASSWORD        - password for the root account
-#   USER_PASSWORD        - password for VOID_USERNAME
+# mounted.
 
 set -euo pipefail
 
-log() { echo "[void-setup-minimal] $*"; }
-
-log "Setting hostname to ${VOID_HOSTNAME}..."
+echo "Setting hostname to ${VOID_HOSTNAME}..."
 echo "${VOID_HOSTNAME}" > /etc/hostname
 
 # ---------------------------------------------------------------------------
 # Timezone
 # ---------------------------------------------------------------------------
-log "Setting timezone to ${VOID_TIMEZONE}..."
+echo "Setting timezone to ${VOID_TIMEZONE}..."
 ln -sf "/usr/share/zoneinfo/${VOID_TIMEZONE}" /etc/localtime
 
 # ---------------------------------------------------------------------------
 # Locale
 # ---------------------------------------------------------------------------
-log "Configuring locale ${VOID_LOCALE}..."
+echo "Configuring locale ${VOID_LOCALE}..."
 echo "LANG=${VOID_LOCALE}" > /etc/locale.conf
-# Enable the locale in libc-locales: uncomment an existing commented line, or
-# append a new line if none is found. The file ships with entries like:
-#   #en_US.UTF-8 UTF-8
-# so a plain grep matches the commented form and would skip enabling it.
 if ! grep -qxF "${VOID_LOCALE} UTF-8" /etc/default/libc-locales 2>/dev/null; then
     sed -i "s/^#\(${VOID_LOCALE} .\+\)/\1/" /etc/default/libc-locales
-    grep -qF "${VOID_LOCALE}" /etc/default/libc-locales || \
+    if ! grep -qF "${VOID_LOCALE}" /etc/default/libc-locales; then
         echo "${VOID_LOCALE} UTF-8" >> /etc/default/libc-locales
+    fi
 fi
 xbps-reconfigure -f glibc-locales
 
 # ---------------------------------------------------------------------------
 # Console keymap
 # ---------------------------------------------------------------------------
-log "Setting console keymap to ${VOID_KEYMAP}..."
+echo "Setting console keymap to ${VOID_KEYMAP}..."
 echo "KEYMAP=${VOID_KEYMAP}" > /etc/vconsole.conf
 
 # ---------------------------------------------------------------------------
 # Install runtime services
 # ---------------------------------------------------------------------------
-log "Installing runtime services (dhcpcd, openssh)..."
+echo "Installing runtime services (dhcpcd, openssh)..."
 XBPS_ARCH="${VOID_TARGET_ARCH}" xbps-install -y \
     --repository="${VOID_XBPS_REPOSITORY}" \
-    dhcpcd openssh
+    dhcpcd openssh pam
+
+[ -f /etc/pam.d/passwd ] || { echo "ERROR: /etc/pam.d/passwd missing"; exit 1; }
+
+if [ -f /etc/pam.d/system-auth ]; then
+    pam_include_file="/etc/pam.d/system-auth"
+elif [ -f /etc/pam.d/system-login ]; then
+    pam_include_file="/etc/pam.d/system-login"
+else
+    echo "ERROR: neither /etc/pam.d/system-auth nor /etc/pam.d/system-login exists"
+    exit 1
+fi
+
+cat > /etc/pam.d/chpasswd << 'PAMCHPASSWD'
+auth       sufficient   pam_rootok.so
+account    required     pam_permit.so
+password   required     pam_unix.so nullok sha512
+session    required     pam_permit.so
+PAMCHPASSWD
+
+[ -f /etc/pam.d/chpasswd ] || { echo "ERROR: /etc/pam.d/chpasswd missing"; exit 1; }
+
+sed -i '/pam_pwquality\.so/d;/pam_cracklib\.so/d' /etc/pam.d/passwd
+sed -i '/pam_pwquality\.so/d;/pam_cracklib\.so/d' "${pam_include_file}"
+
+sed -Ei '/pam_unix\.so/ s/(^|[[:space:]])(retry=[^[:space:]]+|minlen=[^[:space:]]+|ucredit=[^[:space:]]+|lcredit=[^[:space:]]+|dcredit=[^[:space:]]+|ocredit=[^[:space:]]+)//g' /etc/pam.d/passwd
+sed -Ei '/pam_unix\.so/ s/(^|[[:space:]])(retry=[^[:space:]]+|minlen=[^[:space:]]+|ucredit=[^[:space:]]+|lcredit=[^[:space:]]+|dcredit=[^[:space:]]+|ocredit=[^[:space:]]+)//g' "${pam_include_file}"
+
+[ -f /usr/lib/security/pam_unix.so ] || [ -f /lib/security/pam_unix.so ] || { echo "ERROR: pam_unix.so not found"; exit 1; }
+
+[ -f /etc/nsswitch.conf ] || { echo "ERROR: /etc/nsswitch.conf missing"; exit 1; }
+if grep -q '^passwd:' /etc/nsswitch.conf; then
+    sed -i 's/^passwd:.*/passwd: files/' /etc/nsswitch.conf
+else
+    echo 'passwd: files' >> /etc/nsswitch.conf
+fi
+if grep -q '^shadow:' /etc/nsswitch.conf; then
+    sed -i 's/^shadow:.*/shadow: files/' /etc/nsswitch.conf
+else
+    echo 'shadow: files' >> /etc/nsswitch.conf
+fi
+if grep -q '^group:' /etc/nsswitch.conf; then
+    sed -i 's/^group:.*/group: files/' /etc/nsswitch.conf
+else
+    echo 'group: files' >> /etc/nsswitch.conf
+fi
+
+[ -f /etc/passwd ] || { echo "ERROR: /etc/passwd missing"; exit 1; }
+[ -f /etc/shadow ] || { echo "ERROR: /etc/shadow missing"; exit 1; }
+chmod 644 /etc/passwd
+chmod 600 /etc/shadow
+[ -w /etc/passwd ] || { echo "ERROR: /etc/passwd not writable"; exit 1; }
+[ -w /etc/shadow ] || { echo "ERROR: /etc/shadow not writable"; exit 1; }
+
+mountpoint -q /proc || mount -t proc proc /proc
+mountpoint -q /sys || mount -t sysfs sys /sys
+mountpoint -q /dev || mount --bind /dev /dev
 
 # ---------------------------------------------------------------------------
 # Root password
 # ---------------------------------------------------------------------------
-log "Setting root password..."
-echo "root:${ROOT_PASSWORD}" | chpasswd
+echo "Creating user ${VOID_USERNAME}..."
+getent passwd root
+id -u "${VOID_USERNAME}" >/dev/null 2>&1 || useradd -m -G wheel,audio,video,cdrom,floppy,optical,kvm,input,storage "${VOID_USERNAME}"
 
-# ---------------------------------------------------------------------------
-# Regular user
-# ---------------------------------------------------------------------------
-log "Creating user ${VOID_USERNAME}..."
-useradd -m -G wheel,audio,video,cdrom,floppy,optical,kvm,input,storage \
-    "${VOID_USERNAME}"
-echo "${VOID_USERNAME}:${USER_PASSWORD}" | chpasswd
+set +e
+printf 'root:%s\n' "${ROOT_PASSWORD}" | chpasswd
+rc=$?
+set -e
+if [ "${rc}" -ne 0 ]; then
+    echo "chpasswd failed for root"
+    dmesg | tail
+    if [ -f /var/log/auth.log ]; then
+        cat /var/log/auth.log
+    fi
+    exit 1
+fi
+
+set +e
+printf '%s:%s\n' "${VOID_USERNAME}" "${USER_PASSWORD}" | chpasswd
+rc=$?
+set -e
+if [ "${rc}" -ne 0 ]; then
+    echo "chpasswd failed for user"
+    dmesg | tail
+    if [ -f /var/log/auth.log ]; then
+        cat /var/log/auth.log
+    fi
+    exit 1
+fi
+
+getent passwd root
+getent shadow root
+getent passwd "${VOID_USERNAME}"
+getent shadow "${VOID_USERNAME}"
+
+grep '^root:' /etc/shadow | grep -Eq '^[^:]+:[^!*]' || { echo "root password not set"; exit 1; }
+grep "^${VOID_USERNAME}:" /etc/shadow | grep -Eq '^[^:]+:[^!*]' || { echo "user password not set"; exit 1; }
+
+root_status="$(passwd -S root)"
+user_status="$(passwd -S "${VOID_USERNAME}")"
+echo "${root_status}"
+echo "${user_status}"
+passwd -S root | grep -q ' P ' || { echo "root not active"; exit 1; }
+passwd -S "${VOID_USERNAME}" | grep -q ' P ' || { echo "user not active"; exit 1; }
 
 # Allow members of the wheel group to use sudo.
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel-sudo
@@ -96,7 +154,7 @@ echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel-sudo
 # ---------------------------------------------------------------------------
 # /etc/fstab
 # ---------------------------------------------------------------------------
-log "Generating /etc/fstab..."
+echo "Generating /etc/fstab..."
 VOID_EFI_UUID=$(blkid -s UUID -o value "${VOID_EFI_PARTITION}")
 VOID_ROOT_UUID=$(blkid -s UUID -o value \
     "/dev/${VOID_LVM_VG_NAME}/${VOID_LVM_ROOT_LV_NAME}")
@@ -114,7 +172,7 @@ FSTAB
 # ---------------------------------------------------------------------------
 # /etc/crypttab
 # ---------------------------------------------------------------------------
-log "Generating /etc/crypttab..."
+echo "Generating /etc/crypttab..."
 VOID_LUKS_UUID=$(blkid -s UUID -o value "${VOID_LUKS_PARTITION}")
 
 cat > /etc/crypttab << CRYPTTAB
@@ -125,7 +183,7 @@ CRYPTTAB
 # ---------------------------------------------------------------------------
 # dracut - include crypt + lvm modules in the initramfs.
 # ---------------------------------------------------------------------------
-log "Configuring dracut for LUKS and LVM..."
+echo "Configuring dracut for LUKS and LVM..."
 mkdir -p /etc/dracut.conf.d
 cat > /etc/dracut.conf.d/void-crypt-lvm.conf << DRACUT
 hostonly="no"
@@ -136,12 +194,8 @@ DRACUT
 # ---------------------------------------------------------------------------
 # GRUB - configure and install the EFI bootloader.
 # ---------------------------------------------------------------------------
-log "Configuring GRUB..."
+echo "Configuring GRUB..."
 
-# Kernel parameters passed to the initramfs:
-#   rd.luks.uuid  - tells dracut which LUKS partition to unlock.
-#   rd.lvm.vg     - activates the correct volume group after unlock.
-#   root          - the root device once LVM is active.
 cat > /etc/default/grub << GRUBCONF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=5
@@ -151,13 +205,7 @@ GRUB_CMDLINE_LINUX_DEFAULT="loglevel=4 rd.luks.uuid=${VOID_LUKS_UUID} rd.lvm.vg=
 GRUB_CMDLINE_LINUX=""
 GRUBCONF
 
-log "Installing GRUB to EFI partition..."
-# --no-nvram   : do not write an NVRAM entry (not possible inside a chroot)
-# --removable  : install to the fallback EFI path (EFI/BOOT/BOOTX64.EFI) so
-#                the device boots on any machine without a pre-existing NVRAM
-#                entry - essential for removable storage like SD cards.
-# --modules    : preload the partition, filesystem, crypto, and LVM modules
-#                needed to reach /boot when it lives inside LUKS-on-LVM.
+echo "Installing GRUB to EFI partition..."
 grub-install \
     --target=x86_64-efi \
     --efi-directory=/boot/efi \
@@ -167,23 +215,66 @@ grub-install \
     --removable \
     --recheck
 
-log "Generating GRUB configuration..."
+echo "Generating GRUB configuration..."
 grub-mkconfig -o /boot/grub/grub.cfg
 
 # ---------------------------------------------------------------------------
 # runit services
 # ---------------------------------------------------------------------------
-log "Enabling runit services..."
+echo "Enabling runit services..."
 ln -sf /etc/sv/dhcpcd /etc/runit/runsvdir/default/
 ln -sf /etc/sv/sshd   /etc/runit/runsvdir/default/
 
 # ---------------------------------------------------------------------------
 # Finalise xbps package configuration.
-# Reconfiguring all packages ensures the kernel package runs its post-install
-# hook, which calls dracut with the configuration written above and generates
-# the initramfs with the crypt and lvm modules included.
 # ---------------------------------------------------------------------------
-log "Reconfiguring all installed packages (this regenerates the initramfs)..."
+echo "Reconfiguring all installed packages (this regenerates the initramfs)..."
 xbps-reconfigure -fa
 
-log "Minimal system setup complete."
+# Re-apply credentials as the final step in case any package hook touched
+# account state during bulk reconfigure.
+getent passwd root
+id -u "${VOID_USERNAME}" >/dev/null 2>&1 || useradd -m "${VOID_USERNAME}"
+
+set +e
+printf 'root:%s\n' "${ROOT_PASSWORD}" | chpasswd
+rc=$?
+set -e
+if [ "${rc}" -ne 0 ]; then
+    echo "chpasswd failed for root"
+    dmesg | tail
+    if [ -f /var/log/auth.log ]; then
+        cat /var/log/auth.log
+    fi
+    exit 1
+fi
+
+set +e
+printf '%s:%s\n' "${VOID_USERNAME}" "${USER_PASSWORD}" | chpasswd
+rc=$?
+set -e
+if [ "${rc}" -ne 0 ]; then
+    echo "chpasswd failed for user"
+    dmesg | tail
+    if [ -f /var/log/auth.log ]; then
+        cat /var/log/auth.log
+    fi
+    exit 1
+fi
+
+getent passwd root
+getent shadow root
+getent passwd "${VOID_USERNAME}"
+getent shadow "${VOID_USERNAME}"
+
+grep '^root:' /etc/shadow | grep -Eq '^[^:]+:[^!*]' || { echo "root password not set"; exit 1; }
+grep "^${VOID_USERNAME}:" /etc/shadow | grep -Eq '^[^:]+:[^!*]' || { echo "user password not set"; exit 1; }
+
+root_status="$(passwd -S root)"
+user_status="$(passwd -S "${VOID_USERNAME}")"
+echo "${root_status}"
+echo "${user_status}"
+passwd -S root | grep -q ' P ' || { echo "root not active"; exit 1; }
+passwd -S "${VOID_USERNAME}" | grep -q ' P ' || { echo "user not active"; exit 1; }
+
+echo "Minimal system setup complete."

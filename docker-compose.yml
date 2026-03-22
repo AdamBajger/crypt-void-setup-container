@@ -1,6 +1,7 @@
 services:
   void-setup:
     build:
+      dockerfile: Dockerfile
       context: .
       args:
         - VOID_XBPS_REPOSITORY=${VOID_XBPS_REPOSITORY:-"https://repo-default.voidlinux.org/current"}

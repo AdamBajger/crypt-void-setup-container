@@ -33,7 +33,7 @@ jobs:
       - name: Download Void Linux ISO
         run: wrappers/qemu-setup-vm.sh
         env:
-          VOID_ISO_URL: ${{ vars.VOID_ISO_URL }}
+          VOID_ISO_URL: "https://repo-default.voidlinux.org/live/current/void-live-x86_64-20250202-base.iso"
 
       - name: Run build in QEMU
         run: wrappers/qemu-run-build.sh

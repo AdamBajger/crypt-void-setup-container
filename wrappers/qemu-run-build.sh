@@ -60,7 +60,8 @@ qemu-system-x86_64 \
     -initrd "${BOOT_DIR}/combined-initrd.img" \
     -append "rdinit=/init console=ttyS0" \
     -cdrom "${VOID_ISO}" \
-    -virtfs "local,path=${REPO_ROOT},mount_tag=hostshare,security_model=none" \
+    -fsdev "local,id=fsdev0,path=${REPO_ROOT},security_model=none" \
+    -device "virtio-9p-pci,fsdev=fsdev0,mount_tag=hostshare" \
     -netdev "user,id=net0" \
     -device "virtio-net-pci,netdev=net0" \
     -nographic \

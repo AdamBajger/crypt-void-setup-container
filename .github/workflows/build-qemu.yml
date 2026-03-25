@@ -42,7 +42,7 @@ jobs:
           LUKS_PASSWORD: ${{ secrets.LUKS_PASSWORD }}
           ROOT_PASSWORD: ${{ secrets.ROOT_PASSWORD }}
           USER_PASSWORD: ${{ secrets.USER_PASSWORD }}
-          VOID_XBPS_REPOSITORY: ${{ vars.VOID_XBPS_REPOSITORY }}
+          VOID_XBPS_REPOSITORY: ${{ vars.VOID_XBPS_REPOSITORY || 'https://repo-default.voidlinux.org/current' }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

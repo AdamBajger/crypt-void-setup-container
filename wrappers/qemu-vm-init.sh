@@ -41,13 +41,14 @@ mount -t overlay overlay \
     /mnt/root
 
 # Try current root first, then Void live lower/root paths after overlay is mounted.
-modprobe 9pnet_virtio 2>/dev/null \
-    || modprobe -d /mnt/lower 9pnet_virtio 2>/dev/null \
-    || modprobe -d /mnt/root 9pnet_virtio 2>/dev/null \
-    || true
+if ! modprobe 9pnet_virtio 2>/dev/null \
+    && ! modprobe -d /mnt/lower 9pnet_virtio 2>/dev/null \
+    && ! modprobe -d /mnt/root 9pnet_virtio 2>/dev/null; then
+    echo "WARNING: could not pre-load 9pnet_virtio module; mount may still work if built in." >&2
+fi
 
 mount -t 9p -o trans=virtio,version=9p2000.L hostshare /mnt/host || {
-    echo "ERROR: failed to mount hostshare 9p share; check 9pnet_virtio support and hostshare QEMU wiring." >&2
+    echo "ERROR: failed to mount hostshare at /mnt/host; verify 9pnet_virtio support and QEMU hostshare settings (-fsdev local + -device virtio-9p-pci)." >&2
     # Brief delay so the error is visible on serial console before poweroff.
     sleep 2
     echo o > /proc/sysrq-trigger

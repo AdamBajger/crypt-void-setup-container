@@ -46,7 +46,8 @@ modprobe 9pnet_virtio 2>/dev/null \
     || true
 
 mount -t 9p -o trans=virtio,version=9p2000.L hostshare /mnt/host || {
-    echo "ERROR: failed to mount host 9p share (hostshare)." >&2
+    echo "ERROR: failed to mount host 9p share (hostshare); check 9pnet_virtio support and QEMU hostshare wiring." >&2
+    # Brief delay so the error is visible on serial console before poweroff.
     sleep 2
     echo o > /proc/sysrq-trigger
 }

@@ -40,13 +40,14 @@ mount -t overlay overlay \
     -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work \
     /mnt/root
 
+# Try current root first, then Void live lower/root paths after overlay is mounted.
 modprobe 9pnet_virtio 2>/dev/null \
     || modprobe -d /mnt/lower 9pnet_virtio 2>/dev/null \
     || modprobe -d /mnt/root 9pnet_virtio 2>/dev/null \
     || true
 
 mount -t 9p -o trans=virtio,version=9p2000.L hostshare /mnt/host || {
-    echo "ERROR: failed to mount host 9p share (hostshare); check 9pnet_virtio support and QEMU hostshare wiring." >&2
+    echo "ERROR: failed to mount hostshare 9p share; check 9pnet_virtio support and hostshare QEMU wiring." >&2
     # Brief delay so the error is visible on serial console before poweroff.
     sleep 2
     echo o > /proc/sysrq-trigger

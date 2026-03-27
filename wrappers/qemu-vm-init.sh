@@ -19,11 +19,6 @@ for mod in virtio_pci virtio_blk virtio_scsi \
 done
 
 mkdir -p /mnt/host
-mount -t 9p -o trans=virtio,version=9p2000.L hostshare /mnt/host
-
-. /mnt/host/vm/.build-env
-rm -f /mnt/host/vm/.build-env
-
 mkdir -p /mnt/cdrom
 mount -t iso9660 /dev/sr0 /mnt/cdrom
 
@@ -44,6 +39,20 @@ mount -t squashfs -o ro "$SQUASHFS" /mnt/lower
 mount -t overlay overlay \
     -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work \
     /mnt/root
+
+modprobe 9pnet_virtio 2>/dev/null \
+    || modprobe -d /mnt/lower 9pnet_virtio 2>/dev/null \
+    || modprobe -d /mnt/root 9pnet_virtio 2>/dev/null \
+    || true
+
+mount -t 9p -o trans=virtio,version=9p2000.L hostshare /mnt/host || {
+    echo "ERROR: failed to mount host 9p share (hostshare)." >&2
+    sleep 2
+    echo o > /proc/sysrq-trigger
+}
+
+. /mnt/host/vm/.build-env
+rm -f /mnt/host/vm/.build-env
 
 for d in proc sys dev dev/pts; do
     mkdir -p "/mnt/root/$d"

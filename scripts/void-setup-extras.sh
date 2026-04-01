@@ -30,8 +30,19 @@ xbps-install -y bash dbus elogind
 log "Installing KDE6 Plasma desktop environment..."
 xbps-install -y kde-plasma kde-baseapps sddm sddm-kcm dolphin xorg
 
+log "Installing GPU drivers (pick the right block)..."
+# Intel/AMD (Mesa, robust default across laptops)
+xbps-install -y mesa-dri mesa-vulkan-intel mesa-vulkan-radeon
+# Intel legacy (older Intel iGPU; usually not needed with modesetting)
+# xbps-install -y xf86-video-intel
+# AMD (modern Radeon iGPU/dGPU; usually not needed with modesetting)
+# xbps-install -y xf86-video-amdgpu
+# NVIDIA proprietary (preferred for recent NVIDIA dGPU; needs extra setup)
+# xbps-install -y nvidia nvidia-libs
+# NVIDIA open driver (nouveau) uses Mesa; no extra packages beyond Mesa
+
 log "Installing desktop integration tools..."
-xbps-install -y xdg-desktop-portal-kde flatpak
+xbps-install -y xdg-desktop-portal-kde flatpak kdeconnect
 
 log "Installing networking tools..."
 # Note: python3-dbus is required for Eduroam support with the eduroam_cat installer
@@ -50,7 +61,7 @@ log "Installing security & cryptography tools..."
 xbps-install -y gnupg gnome-keyring kleopatra
 
 log "Installing power management..."
-xbps-install -y tlp tlp-pd tlp-rdw 
+xbps-install -y tlp tlp-pd tlp-rdw
 
 log "Installing browser and web tools..."
 xbps-install -y brave wget curl ping
@@ -60,6 +71,42 @@ log "Download Firefox Developer Edition from web and install it as a local packa
 FIREFOX_DEVELOPER_URL="https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=cs"
 # TODO: Verify the downloaded file's integrity using gpg signatures or checksums from Mozilla's official sources.
 # TODO: install
+
+log "Installing archive tools..."
+xbps-install -y ark
+
+log "Installing text editors..."
+xbps-install -y vim kate
+
+log "Installing development tools..."
+xbps-install -y gcc python3-setuptools uv
+
+log "Installing input device managers..."
+xbps-install -y Solaar
+
+log "Installing system administration tools..."
+xbps-install -y htop lsof lvm2 mdadm cryptsetup libparted libparted-devel gvfs
+
+log "Installing container, virtualization, and Kubernetes tools..."
+xbps-install -y docker docker-buildx docker-compose qemu kubectl helm
+
+log "Installing networking & VPN tools..."
+xbps-install -y eduvpn-client nm-tray
+
+log "Installing firewall management..."
+xbps-install -y nftables plasma-firewall
+
+log "Installing bootloader (UEFI)..."
+xbps-install -y grub-x86_64-efi
+
+log "Installing time synchronization..."
+xbps-install -y chrony
+
+log "Installing media & office applications..."
+xbps-install -y libreoffice vlc thunderbird
+
+log "Installing system utilities..."
+xbps-install -y pigz postgresql-client rtkit void-docs-browse xmirror xtools
 
 
 
@@ -105,6 +152,29 @@ ln -sf /usr/share/alsa/alsa.conf.d/50-pipewire.conf /etc/alsa/conf.d
 ln -sf /usr/share/alsa/alsa.conf.d/99-pipewire-default.conf /etc/alsa/conf.d
 
 # ---------------------------------------------------------------------------
+# Configure Docker daemon
+# ---------------------------------------------------------------------------
+log "Configuring Docker..."
+sudo usermod -a -G docker "${VOID_USERNAME}"
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json << 'EOF'
+{
+  "storage-driver": "overlay2",
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+EOF
+
+# ---------------------------------------------------------------------------
+# Configure time synchronization with Chrony
+# ---------------------------------------------------------------------------
+log "Configuring Chrony NTP..."
+sudo ln -s /etc/sv/chronyd /var/service/
+
+# ---------------------------------------------------------------------------
 # Configure shell and services
 # ---------------------------------------------------------------------------
 chsh -s /bin/bash "${VOID_USERNAME}"
@@ -117,7 +187,8 @@ sudo ln -s /etc/sv/sddm /var/service/
 sudo ln -s /etc/sv/NetworkManager /var/service/
 sudo ln -s /etc/sv/tlp /var/service/
 sudo ln -s /etc/sv/tlp-pd /var/service/
+sudo ln -s /etc/sv/bluetoothd /var/service/
+sudo ln -s /etc/sv/docker /var/service/
 
 log "Extra customisation complete."
-log "PipeWire audio setup configured for Wayland + KDE6."
-log "PipeWire will autostart through KDE6's desktop autostart on first graphical session."
+log "KDE6 Plasma desktop configured with PipeWire audio and essential tools."

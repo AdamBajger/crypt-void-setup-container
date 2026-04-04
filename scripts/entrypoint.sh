@@ -116,6 +116,12 @@ log "Ensuring loop device nodes are present..."
 ensure_loop_nodes
 
 # ---------------------------------------------------------------------------
+# Step 0b - Verify pre-downloaded binaries inside the container.
+# ---------------------------------------------------------------------------
+log "Running preflight verification for local binaries..."
+/tools/preflight-verify-binaries.sh
+
+# ---------------------------------------------------------------------------
 # Step 1 - Parse configuration.
 # ---------------------------------------------------------------------------
 log "Reading disk configuration from ${DISK_CONFIG_FILE}..."
@@ -323,6 +329,10 @@ report_phase_usage "minimal system setup"
 # ---------------------------------------------------------------------------
 # Step 9 - Configure the system inside xchroot.
 # ---------------------------------------------------------------------------
+log "Copying binaries into chroot..."
+mkdir -p "${VOID_INSTALL_MOUNT}/binaries"
+cp -a /binaries/. "${VOID_INSTALL_MOUNT}/binaries/"
+
 log "Copying extra customisation script into chroot..."
 cp /setup/void-setup-extras.sh  "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"
 chmod +x "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"

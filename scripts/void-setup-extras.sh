@@ -66,11 +66,48 @@ xbps-install -y tlp tlp-pd tlp-rdw
 log "Installing browser and web tools..."
 xbps-install -y brave wget curl ping
 
-log "Download Firefox Developer Edition from web and install it as a local package..."
-# Note: Firefox Developer Edition is not available in VoidLinux repositories, so we download and install it manually.
-FIREFOX_DEVELOPER_URL="https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=cs"
-# TODO: Verify the downloaded file's integrity using gpg signatures or checksums from Mozilla's official sources.
-# TODO: install
+log "Install Firefox Developer Edition from local artifacts..."
+# Note: Files are verified on the host before entrypoint runs.
+FIREFOX_DEVELOPER_TARBALL="/binaries/firefox-developer/firefox-150.0b5.tar.xz"
+rm -rf /opt/firefox-developer
+mkdir -p /opt
+tar -xJf "$FIREFOX_DEVELOPER_TARBALL" -C /opt
+mv /opt/firefox /opt/firefox-developer
+ln -sf /opt/firefox-developer/firefox /usr/local/bin/firefox-developer
+mkdir -p /usr/local/share/applications
+cat > /usr/local/share/applications/firefox-developer.desktop << 'EOF'
+[Desktop Entry]
+Name=Firefox Developer Edition
+Comment=Web Browser
+GenericName=Web Browser
+Exec=/opt/firefox-developer/firefox %u
+Icon=/opt/firefox-developer/browser/chrome/icons/default/default128.png
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+StartupNotify=true
+EOF
+log "Install Microsoft Visual Studio Code from local artifacts..."
+# Note: Files are verified on the host before entrypoint runs.
+VSCODE_TARBALL="/binaries/vscode/code-stable-x64-1775036184.tar.gz"
+rm -rf /opt/vscode
+mkdir -p /opt
+tar -xzf "$VSCODE_TARBALL" -C /opt
+mv /opt/VSCode-linux-x64 /opt/vscode
+ln -sf /opt/vscode/bin/code /usr/local/bin/code
+mkdir -p /usr/local/share/applications
+cat > /usr/local/share/applications/code.desktop << 'EOF'
+[Desktop Entry]
+Name=Visual Studio Code
+Comment=Code Editing. Redefined.
+GenericName=Text Editor
+Exec=/opt/vscode/bin/code --unity-launch %F
+Icon=/opt/vscode/resources/app/resources/linux/code.png
+Terminal=false
+Type=Application
+Categories=Development;IDE;
+StartupNotify=true
+EOF
 
 log "Installing archive tools..."
 xbps-install -y ark

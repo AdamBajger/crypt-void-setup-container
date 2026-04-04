@@ -11,10 +11,14 @@ services:
     volumes:
       # Mount your configuration directory (read-only).
       - ./config:/config:ro
+      # Mount pre-downloaded binaries (read-only).
+      - ./binaries:/binaries:ro
       # Mount the output directory where the final disk image will be saved.
       - ./output:/output
       # Mount the scripts directory so changes take effect without rebuilding.
       - ./scripts:/setup
+      # Mount helper tools (read-only).
+      - ./tools:/tools:ro
     environment:
       # Passwords are supplied exclusively through environment variables and
       # must never be stored in configuration files or committed to source control.

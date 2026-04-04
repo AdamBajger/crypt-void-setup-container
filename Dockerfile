@@ -10,6 +10,7 @@ RUN xbps-install -iyuS \
     xbps-install -iy \
         --repository "${VOID_XBPS_REPOSITORY}" \
         cryptsetup \
+        gnupg \
         lvm2 \
         parted \
         dosfstools \

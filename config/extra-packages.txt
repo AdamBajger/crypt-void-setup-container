@@ -1,0 +1,116 @@
+# System fundamentals
+bash
+dbus
+elogind
+
+# KDE6 Plasma desktop environment
+kde-plasma
+kde-baseapps
+sddm
+sddm-kcm
+dolphin
+xorg
+
+# GPU drivers (Mesa, robust default)
+mesa-dri
+mesa-vulkan-intel
+mesa-vulkan-radeon
+
+# Desktop integration tools
+xdg-desktop-portal-kde
+flatpak
+kdeconnect
+
+# Networking tools
+NetworkManager
+plasma-nm
+python3-dbus
+
+# Multimedia & graphics tools
+kdegraphics-thumbnailers
+ffmpegthumbs
+spectacle
+
+# Audio subsystem (PipeWire)
+pipewire
+wireplumber
+pulseaudio-utils
+alsa-pipewire
+libspa-bluetooth
+
+# Bluetooth support
+blueman
+
+# Security & cryptography tools
+gnupg
+gnome-keyring
+kleopatra
+
+# Power management
+tlp
+tlp-pd
+tlp-rdw
+
+# Browser and web tools
+wget
+curl
+fping
+
+# Archive tools
+ark
+
+# Text editors
+vim
+kate
+
+# Development tools
+gcc
+python3-setuptools
+uv
+
+# Input device managers
+Solaar
+
+# System administration tools
+htop
+lsof
+lvm2
+mdadm
+cryptsetup
+libparted
+libparted-devel
+gvfs
+
+# Container, virtualization, and Kubernetes tools
+docker
+docker-buildx
+docker-compose
+qemu
+kubectl
+helm
+
+# Networking & VPN tools
+eduvpn-client
+nm-tray
+
+# Firewall management
+nftables
+plasma-firewall
+
+# Bootloader (UEFI)
+grub-x86_64-efi
+
+# Time synchronization
+chrony
+
+# Media & office applications
+libreoffice
+vlc
+
+# System utilities
+pigz
+postgresql-client
+rtkit
+void-docs-browse
+xmirror
+xtools

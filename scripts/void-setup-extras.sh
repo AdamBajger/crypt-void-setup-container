@@ -15,56 +15,51 @@
 #
 # Receives the same environment variables as void-setup-minimal.sh
 # (VOID_HOSTNAME, VOID_USERNAME, ROOT_PASSWORD, USER_PASSWORD, …).
-
+return 24 # Fail early, as this file will not work. some Flatpaks cannot be installed inside of a container due to sandboxing limitations. QEMU implementation is necessary. 
 set -euo pipefail
 
 log() { echo "[void-setup-extras] $*"; }
 
 # ---------------------------------------------------------------------------
-# Install packages - organized by theme
+# Install packages from a commented list
 # ---------------------------------------------------------------------------
+EXTRA_PACKAGES_FILE="/tmp/extra-packages.txt"
+mapfile -t EXTRA_PACKAGES < <(
+  sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' "${EXTRA_PACKAGES_FILE}"
+)
 
-log "Installing system fundamentals..."
-xbps-install -y bash dbus elogind
+log "Installing extra packages from ${EXTRA_PACKAGES_FILE}..."
+xbps-install -y "${EXTRA_PACKAGES[@]}"
 
-log "Installing KDE6 Plasma desktop environment..."
-xbps-install -y kde-plasma kde-baseapps sddm sddm-kcm dolphin xorg
+# Ensure Flatpak is initialized and Flathub is added (idempotent)
+if ! flatpak remote-list | grep -q flathub; then
+  log "Adding Flathub Flatpak remote..."
+  flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+fi
 
-log "Installing GPU drivers (pick the right block)..."
-# Intel/AMD (Mesa, robust default across laptops)
-xbps-install -y mesa-dri mesa-vulkan-intel mesa-vulkan-radeon
-# Intel legacy (older Intel iGPU; usually not needed with modesetting)
-# xbps-install -y xf86-video-intel
-# AMD (modern Radeon iGPU/dGPU; usually not needed with modesetting)
-# xbps-install -y xf86-video-amdgpu
-# NVIDIA proprietary (preferred for recent NVIDIA dGPU; needs extra setup)
-# xbps-install -y nvidia nvidia-libs
-# NVIDIA open driver (nouveau) uses Mesa; no extra packages beyond Mesa
+log "Installing Flatpak applications..."
+flatpak install -y --noninteractive flathub \
+  com.brave.Browser \
+  org.mozilla.Thunderbird \
+  org.gimp.GIMP \
+  org.signal.Signal \
+  com.slack.Slack \
+  org.telegram.desktop \
+  com.github.tchx84.Flatseal
 
-log "Installing desktop integration tools..."
-xbps-install -y xdg-desktop-portal-kde flatpak kdeconnect
-
-log "Installing networking tools..."
-# Note: python3-dbus is required for Eduroam support with the eduroam_cat installer
-xbps-install -y NetworkManager plasma-nm python3-dbus
-
-log "Installing multimedia & graphics tools..."
-xbps-install -y kdegraphics-thumbnailers ffmpegthumbs spectacle
-
-log "Installing audio subsystem (PipeWire)..."
-xbps-install -y pipewire wireplumber pulseaudio-utils alsa-pipewire libspa-bluetooth
-
-log "Installing Bluetooth support..."
-xbps-install -y blueman
-
-log "Installing security & cryptography tools..."
-xbps-install -y gnupg gnome-keyring kleopatra
-
-log "Installing power management..."
-xbps-install -y tlp tlp-pd tlp-rdw
-
-log "Installing browser and web tools..."
-xbps-install -y brave wget curl ping
+log "Creating Brave desktop shortcut for system-wide access..."
+cat > /usr/local/share/applications/brave-browser.desktop << 'EOF'
+[Desktop Entry]
+Name=Brave Web Browser
+Comment=Browse the Web
+GenericName=Web Browser
+Exec=flatpak run com.brave.Browser %u
+Icon=brave-browser
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+StartupNotify=true
+EOF
 
 log "Install Firefox Developer Edition from local artifacts..."
 # Note: Files are verified on the host before entrypoint runs.
@@ -87,65 +82,120 @@ Type=Application
 Categories=Network;WebBrowser;
 StartupNotify=true
 EOF
-log "Install Microsoft Visual Studio Code from local artifacts..."
-# Note: Files are verified on the host before entrypoint runs.
-VSCODE_TARBALL="/binaries/vscode/code-stable-x64-1775036184.tar.gz"
-rm -rf /opt/vscode
+log "Install Visual Studio Code from local artifacts..."
+# Find the downloaded VS Code tarball
+VSCODE_TARBALL=$(find /binaries/vscode/ -name "code-*.tar.*" | head -n 1)
+log "Extracting ${VSCODE_TARBALL} into /opt..."
+rm -rf /opt/VSCode-linux-x64
 mkdir -p /opt
 tar -xzf "$VSCODE_TARBALL" -C /opt
-mv /opt/VSCode-linux-x64 /opt/vscode
-ln -sf /opt/vscode/bin/code /usr/local/bin/code
+ln -sf /opt/VSCode-linux-x64/bin/code /usr/local/bin/code
+
+log "Creating Visual Studio Code desktop shortcut for system-wide access..."
 mkdir -p /usr/local/share/applications
 cat > /usr/local/share/applications/code.desktop << 'EOF'
 [Desktop Entry]
 Name=Visual Studio Code
 Comment=Code Editing. Redefined.
 GenericName=Text Editor
-Exec=/opt/vscode/bin/code --unity-launch %F
-Icon=/opt/vscode/resources/app/resources/linux/code.png
+Exec=/usr/local/bin/code --no-sandbox --unity-launch %F
+Icon=/opt/VSCode-linux-x64/resources/app/resources/linux/code.png
 Terminal=false
 Type=Application
 Categories=Development;IDE;
 StartupNotify=true
 EOF
 
-log "Installing archive tools..."
-xbps-install -y ark
 
-log "Installing text editors..."
-xbps-install -y vim kate
+log "Creating Thunderbird desktop shortcut for system-wide access..."
+mkdir -p /usr/local/share/applications
+cat > /usr/local/share/applications/thunderbird.desktop << 'EOF'
+[Desktop Entry]
+Name=Thunderbird
+Comment=Email and calendar client
+GenericName=Mail Client
+Exec=flatpak run org.mozilla.Thunderbird %u
+Icon=org.mozilla.Thunderbird
+Terminal=false
+Type=Application
+Categories=Network;Email;
+StartupNotify=true
+EOF
 
-log "Installing development tools..."
-xbps-install -y gcc python3-setuptools uv
+log "Creating GIMP desktop shortcut for system-wide access..."
+mkdir -p /usr/local/share/applications
+cat > /usr/local/share/applications/gimp.desktop << 'EOF'
+[Desktop Entry]
+Name=GIMP
+Comment=Image editor
+GenericName=Image Editor
+Exec=flatpak run org.gimp.GIMP %U
+Icon=org.gimp.GIMP
+Terminal=false
+Type=Application
+Categories=Graphics;2DGraphics;RasterGraphics;
+StartupNotify=true
+EOF
 
-log "Installing input device managers..."
-xbps-install -y Solaar
+log "Creating Signal desktop shortcut for system-wide access..."
+mkdir -p /usr/local/share/applications
+cat > /usr/local/share/applications/signal.desktop << 'EOF'
+[Desktop Entry]
+Name=Signal
+Comment=Private messaging
+GenericName=Messenger
+Exec=flatpak run org.signal.Signal %U
+Icon=org.signal.Signal
+Terminal=false
+Type=Application
+Categories=Network;InstantMessaging;
+StartupNotify=true
+EOF
 
-log "Installing system administration tools..."
-xbps-install -y htop lsof lvm2 mdadm cryptsetup libparted libparted-devel gvfs
+log "Creating Slack desktop shortcut for system-wide access..."
+mkdir -p /usr/local/share/applications
+cat > /usr/local/share/applications/slack.desktop << 'EOF'
+[Desktop Entry]
+Name=Slack
+Comment=Team communication
+GenericName=Messenger
+Exec=flatpak run com.slack.Slack %U
+Icon=com.slack.Slack
+Terminal=false
+Type=Application
+Categories=Network;InstantMessaging;
+StartupNotify=true
+EOF
 
-log "Installing container, virtualization, and Kubernetes tools..."
-xbps-install -y docker docker-buildx docker-compose qemu kubectl helm
+log "Creating Telegram desktop shortcut for system-wide access..."
+mkdir -p /usr/local/share/applications
+cat > /usr/local/share/applications/telegram.desktop << 'EOF'
+[Desktop Entry]
+Name=Telegram Desktop
+Comment=Messaging app
+GenericName=Messenger
+Exec=flatpak run org.telegram.desktop %U
+Icon=org.telegram.desktop
+Terminal=false
+Type=Application
+Categories=Network;InstantMessaging;
+StartupNotify=true
+EOF
 
-log "Installing networking & VPN tools..."
-xbps-install -y eduvpn-client nm-tray
-
-log "Installing firewall management..."
-xbps-install -y nftables plasma-firewall
-
-log "Installing bootloader (UEFI)..."
-xbps-install -y grub-x86_64-efi
-
-log "Installing time synchronization..."
-xbps-install -y chrony
-
-log "Installing media & office applications..."
-xbps-install -y libreoffice vlc thunderbird
-
-log "Installing system utilities..."
-xbps-install -y pigz postgresql-client rtkit void-docs-browse xmirror xtools
-
-
+log "Creating Flatseal desktop shortcut for system-wide access..."
+mkdir -p /usr/local/share/applications
+cat > /usr/local/share/applications/flatseal.desktop << 'EOF'
+[Desktop Entry]
+Name=Flatseal
+Comment=Manage Flatpak permissions
+GenericName=Flatpak Permissions
+Exec=flatpak run com.github.tchx84.Flatseal
+Icon=com.github.tchx84.Flatseal
+Terminal=false
+Type=Application
+Categories=Settings;System;
+StartupNotify=true
+EOF
 
 
 # ---------------------------------------------------------------------------

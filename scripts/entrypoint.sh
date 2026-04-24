@@ -55,7 +55,6 @@ VOID_FINAL_IMAGE_NAME=""
 # Helpers
 # ---------------------------------------------------------------------------
 log() { echo "[void-setup] $*"; }
-die() { echo "[void-setup] ERROR: $*" >&2; exit 1; }
 
 cleanup_minimal() {
     local exit_status="$1"
@@ -103,9 +102,9 @@ source "${REPORTING_LOGIC_FILE}"
 # Step 0 - Validate required environment variables.
 # ---------------------------------------------------------------------------
 log "Validating environment variables..."
-[[ -n "${LUKS_PASSWORD:-}" ]] || die "LUKS_PASSWORD is required but not set"
-[[ -n "${ROOT_PASSWORD:-}" ]] || die "ROOT_PASSWORD is required but not set"
-[[ -n "${USER_PASSWORD:-}" ]] || die "USER_PASSWORD is required but not set"
+: "${LUKS_PASSWORD:?LUKS_PASSWORD is required but not set}"
+: "${ROOT_PASSWORD:?ROOT_PASSWORD is required but not set}"
+: "${USER_PASSWORD:?USER_PASSWORD is required but not set}"
 
 log "Password variables before xchroot:"
 log "  ROOT_PASSWORD length: ${#ROOT_PASSWORD}"
@@ -119,7 +118,7 @@ ensure_loop_nodes
 # Step 0b - Verify pre-downloaded binaries inside the container.
 # ---------------------------------------------------------------------------
 log "Running preflight verification for local binaries..."
-/tools/preflight-verify-binaries.sh
+bash /tools/preflight-verify-binaries.sh
 
 # ---------------------------------------------------------------------------
 # Step 1 - Parse configuration.
@@ -193,8 +192,14 @@ SECTOR_SIZE=$(blockdev --getss "${VOID_LOOP_DEVICE}")
 EFI_PART_LINE=$(parted -ms "${VOID_LOOP_DEVICE}" unit s print | awk -F: '$1=="1" {print $2":"$4}')
 LUKS_PART_LINE=$(parted -ms "${VOID_LOOP_DEVICE}" unit s print | awk -F: '$1=="2" {print $2":"$4}')
 
-[[ -n "${EFI_PART_LINE}" ]] || die "Could not read EFI partition layout from parted output"
-[[ -n "${LUKS_PART_LINE}" ]] || die "Could not read LUKS partition layout from parted output"
+if [[ -z "${EFI_PART_LINE}" ]]; then
+    echo "[void-setup] ERROR: Could not read EFI partition layout from parted output" >&2
+    exit 1
+fi
+if [[ -z "${LUKS_PART_LINE}" ]]; then
+    echo "[void-setup] ERROR: Could not read LUKS partition layout from parted output" >&2
+    exit 1
+fi
 
 EFI_START_SECTORS=${EFI_PART_LINE%:*}
 EFI_SIZE_SECTORS=${EFI_PART_LINE#*:}
@@ -298,7 +303,6 @@ cp /var/db/xbps/keys/* "${VOID_INSTALL_MOUNT}/var/db/xbps/keys/"
 
 XBPS_ARCH="${VOID_TARGET_ARCH}" xbps-install \
     -y \
-    -i \
     -S \
     -r "${VOID_INSTALL_MOUNT}" \
     --repository="${VOID_XBPS_REPOSITORY}" \
@@ -332,6 +336,9 @@ report_phase_usage "minimal system setup"
 log "Copying binaries into chroot..."
 mkdir -p "${VOID_INSTALL_MOUNT}/binaries"
 cp -a /binaries/. "${VOID_INSTALL_MOUNT}/binaries/"
+
+log "Copying extra package list into chroot..."
+cp /config/extra-packages.txt "${VOID_INSTALL_MOUNT}/tmp/extra-packages.txt"
 
 log "Copying extra customisation script into chroot..."
 cp /setup/void-setup-extras.sh  "${VOID_INSTALL_MOUNT}/tmp/void-setup-extras.sh"

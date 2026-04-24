@@ -4,10 +4,10 @@ ARG VOID_XBPS_REPOSITORY="https://repo-default.voidlinux.org/current"
 
 # Synchronise and upgrade the package index, then install all tools required
 # to orchestrate the encrypted disk setup from within the container.
-RUN xbps-install -iyuS \
+RUN xbps-install -yuS \
         --repository "${VOID_XBPS_REPOSITORY}" \
         xbps && \
-    xbps-install -iy \
+    xbps-install -y \
         --repository "${VOID_XBPS_REPOSITORY}" \
         cryptsetup \
         gnupg \

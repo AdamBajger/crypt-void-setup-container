@@ -11,6 +11,7 @@ RUN xbps-install -yuS \
         --repository "${VOID_XBPS_REPOSITORY}" \
         cryptsetup \
         gnupg \
+        curl \
         lvm2 \
         parted \
         dosfstools \

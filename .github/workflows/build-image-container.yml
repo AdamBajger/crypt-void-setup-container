@@ -1,0 +1,118 @@
+name: build-image-container
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            jq \
+            gnupg \
+            xz-utils \
+            curl \
+            coreutils \
+            gawk \
+            sed \
+            parted \
+            file \
+            zstd
+
+      - name: Cache fetched binaries
+        uses: actions/cache@v4
+        with:
+          path: binaries
+          key: binaries-${{ runner.os }}-${{ hashFiles('tools/fetch-binaries.sh') }}
+          restore-keys: |
+            binaries-${{ runner.os }}-
+
+      - name: Fetch upstream binaries
+        run: bash tools/fetch-binaries.sh
+
+      - name: Show binaries manifest
+        run: cat binaries/manifest.json
+
+      - name: Preflight verify binaries
+        run: bash tools/preflight-verify-binaries.sh
+
+      - name: Build installer image
+        run: docker build -t void-installer:ci .
+
+      - name: Run installer container
+        run: |
+          mkdir -p output logs
+          docker run --rm --privileged \
+            -v "$PWD/binaries:/binaries:ro" \
+            -v "$PWD/config:/config:ro" \
+            -v "$PWD/scripts:/setup" \
+            -v "$PWD/tools:/tools:ro" \
+            -v "$PWD/output:/output" \
+            --device /dev/loop-control \
+            -e LUKS_PASSWORD="${{ secrets.LUKS_PASSWORD || 'ci-luks-password-not-secret' }}" \
+            -e ROOT_PASSWORD="${{ secrets.ROOT_PASSWORD || 'ci-root-password-not-secret' }}" \
+            -e USER_PASSWORD="${{ secrets.USER_PASSWORD || 'ci-user-password-not-secret' }}" \
+            void-installer:ci 2>&1 | tee logs/installer.log
+
+      - name: Locate produced image
+        id: locate
+        run: |
+          shopt -s nullglob
+          images=(output/voidlinux_fde_*.img output/void-image.raw)
+          if [[ ${#images[@]} -eq 0 ]]; then
+            echo "No image produced under output/" >&2
+            ls -la output/ >&2 || true
+            exit 1
+          fi
+          image="${images[0]}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          ls -lh "${image}"
+
+      - name: Verify partition table
+        run: |
+          image='${{ steps.locate.outputs.image }}'
+          file "${image}" | tee logs/file.txt
+          file "${image}" | grep -Eq 'DOS/MBR boot sector|GPT partition table'
+          parted -s "${image}" print | tee logs/parted.txt
+          part_count=$(parted -ms "${image}" print 2>/dev/null | awk -F: '/^[0-9]+:/{c++} END{print c+0}')
+          echo "Detected ${part_count} partitions"
+          if [[ "${part_count}" -lt 2 ]]; then
+            echo "Expected at least 2 partitions (ESP + LUKS), got ${part_count}" >&2
+            exit 1
+          fi
+
+      - name: Compress image with zstd
+        run: |
+          image='${{ steps.locate.outputs.image }}'
+          zstd -19 -T0 "${image}" -o "${image}.zst"
+          ls -lh "${image}.zst"
+          echo "compressed=${image}.zst" >> "$GITHUB_ENV"
+
+      - name: Upload image and logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: void-image-container-${{ github.sha }}
+          path: |
+            ${{ env.compressed }}
+            logs/
+          retention-days: 14
+          if-no-files-found: error

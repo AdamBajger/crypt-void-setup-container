@@ -1,0 +1,82 @@
+name: build-image-qemu
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: qemu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 \
+            ovmf \
+            xorriso \
+            expect \
+            socat \
+            jq \
+            gnupg \
+            xz-utils \
+            curl \
+            zstd \
+            cpu-checker
+          kvm-ok || true
+
+      - name: Verify KVM availability
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo "KVM available"
+            ls -l /dev/kvm
+          else
+            echo "::warning::No KVM, using TCG (slow)"
+          fi
+
+      - name: Cache fetched binaries
+        uses: actions/cache@v4
+        with:
+          path: binaries
+          key: binaries-${{ runner.os }}-${{ hashFiles('tools/fetch-binaries.sh') }}
+          restore-keys: |
+            binaries-${{ runner.os }}-
+
+      - name: Fetch upstream binaries
+        run: bash tools/fetch-binaries.sh
+
+      - name: Show binaries manifest
+        run: cat binaries/manifest.json
+
+      - name: Preflight verify binaries
+        run: bash tools/preflight-verify-binaries.sh
+
+      - name: Build image via QEMU
+        run: bash tools/qemu-build.sh
+
+      - name: Compress image with zstd
+        run: |
+          zstd -19 -T0 output/void-vm.raw -o output/void-vm.raw.zst
+          ls -lh output/void-vm.raw.zst
+
+      - name: Upload image and logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: void-image-qemu-${{ github.sha }}
+          path: |
+            output/void-vm.raw.zst
+            logs/
+          retention-days: 14
+          if-no-files-found: error

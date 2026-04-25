@@ -1,45 +1,112 @@
 #!/bin/bash
-# preflight-verify-binaries.sh - Verify locally downloaded artifacts before build.
+# preflight-verify-binaries.sh — Verify locally downloaded artifacts before build.
+#
+# Reads versions/hashes from binaries/manifest.json (produced by tools/fetch-binaries.sh).
+# Strict failure on any missing file, signature mismatch, or checksum mismatch.
 
 set -euo pipefail
 
-BINARIES_DIR="/binaries"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN_DIR="${REPO_ROOT}/binaries"
+MANIFEST="${BIN_DIR}/manifest.json"
 
-FIREFOX_DIR="${BINARIES_DIR}/firefox-developer"
-FIREFOX_TARBALL="${FIREFOX_DIR}/firefox-150.0b5.tar.xz"
-FIREFOX_SHA_PATH="linux-x86_64/cs/firefox-150.0b5.tar.xz"
-FIREFOX_TARBALL_ASC="${FIREFOX_DIR}/firefox-150.0b5.tar.xz.asc"
-
-VSCODE_TARBALL="${BINARIES_DIR}/vscode/code-stable-x64-1775036184.tar.gz"
-VSCODE_SHA256="0fed895a30b492eb5f90417940a38ac21f59f3e8d680c80c3766fca4ac186b2b"
-
-VERIFY_DIR="/tmp/void-binaries-verify"
-GNUPGHOME="${VERIFY_DIR}/gnupg"
-SHA_FILE="${VERIFY_DIR}/SHA512SUMS"
-
-mkdir -p "${VERIFY_DIR}" "${GNUPGHOME}"
-
-log() { echo "[preflight] $*"; }
-
-log "Verifying Firefox Developer Edition signature and checksum..."
-[ -f "${FIREFOX_DIR}/KEY" ] || { echo "Missing ${FIREFOX_DIR}/KEY"; exit 1; }
-[ -f "${FIREFOX_DIR}/SHA512SUMS" ] || { echo "Missing ${FIREFOX_DIR}/SHA512SUMS"; exit 1; }
-[ -f "${FIREFOX_DIR}/SHA512SUMS.asc" ] || { echo "Missing ${FIREFOX_DIR}/SHA512SUMS.asc"; exit 1; }
-[ -f "${FIREFOX_TARBALL}" ] || { echo "Missing ${FIREFOX_TARBALL}"; exit 1; }
-
-gpg --homedir "${GNUPGHOME}" --import "${FIREFOX_DIR}/KEY"
-gpg --homedir "${GNUPGHOME}" --verify "${FIREFOX_DIR}/SHA512SUMS.asc" "${FIREFOX_DIR}/SHA512SUMS"
- 
-if [ -f "${FIREFOX_TARBALL_ASC}" ]; then
-	gpg --homedir "${GNUPGHOME}" --verify "${FIREFOX_TARBALL_ASC}" "${FIREFOX_TARBALL}"
+# Allow callers to point at a different binaries dir (e.g. /binaries inside the container).
+if [[ -n "${BINARIES_DIR:-}" ]]; then
+    BIN_DIR="${BINARIES_DIR}"
+    MANIFEST="${BIN_DIR}/manifest.json"
 fi
 
-awk -v f="${FIREFOX_SHA_PATH}" -v t="${FIREFOX_TARBALL}" '$2==f {print $1"  "t}' "${FIREFOX_DIR}/SHA512SUMS" > "${SHA_FILE}"
-sha512sum -c "${SHA_FILE}" --quiet --strict
+FF_DIR="${BIN_DIR}/firefox-developer"
+VSC_DIR="${BIN_DIR}/vscode"
+ISO_DIR="${BIN_DIR}/void-iso"
 
+VERIFY_DIR="$(mktemp -d -t void-preflight-XXXXXX)"
+GNUPGHOME="${VERIFY_DIR}/gnupg"
+mkdir -p "${GNUPGHOME}"
+chmod 700 "${GNUPGHOME}"
+trap 'rm -rf "${VERIFY_DIR}"' EXIT
+
+log() { echo "[preflight] $*"; }
+die() { echo "[preflight] ERROR: $*" >&2; exit 1; }
+
+command -v jq        >/dev/null 2>&1 || die "jq is required"
+command -v gpg       >/dev/null 2>&1 || die "gpg is required"
+command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required"
+command -v sha512sum >/dev/null 2>&1 || die "sha512sum is required"
+
+[[ -f "${MANIFEST}" ]] || die "missing ${MANIFEST} — run tools/fetch-binaries.sh first"
+
+# ---------------------------------------------------------------------------
+# Firefox Developer Edition
+# ---------------------------------------------------------------------------
+log "Verifying Firefox Developer Edition signature and checksum..."
+FF_FILE=$(jq -r '.firefox_developer.file'               "${MANIFEST}")
+FF_SHA=$(jq  -r '.firefox_developer.sha512'             "${MANIFEST}")
+FF_SHAPATH=$(jq -r '.firefox_developer.sha512sums_path' "${MANIFEST}")
+
+[[ -f "${FF_DIR}/KEY" ]]            || die "missing ${FF_DIR}/KEY"
+[[ -f "${FF_DIR}/SHA512SUMS" ]]     || die "missing ${FF_DIR}/SHA512SUMS"
+[[ -f "${FF_DIR}/SHA512SUMS.asc" ]] || die "missing ${FF_DIR}/SHA512SUMS.asc"
+[[ -f "${FF_DIR}/${FF_FILE}" ]]     || die "missing ${FF_DIR}/${FF_FILE}"
+
+gpg --homedir "${GNUPGHOME}" --batch --import "${FF_DIR}/KEY" 2>/dev/null
+gpg --homedir "${GNUPGHOME}" --batch --verify \
+    "${FF_DIR}/SHA512SUMS.asc" "${FF_DIR}/SHA512SUMS"
+
+# Cross-check: manifest hash must match the line in the GPG-verified SHA512SUMS.
+SIGNED_SHA=$(awk -v p="${FF_SHAPATH}" '$2==p {print $1; exit}' "${FF_DIR}/SHA512SUMS")
+[[ -n "${SIGNED_SHA}" ]] || die "no SHA512SUMS line for ${FF_SHAPATH}"
+[[ "${SIGNED_SHA}" == "${FF_SHA}" ]] || die "manifest SHA differs from signed SHA512SUMS"
+
+# Verify the actual tarball matches the signed hash.
+( cd "${FF_DIR}" && echo "${SIGNED_SHA}  ${FF_FILE}" | sha512sum -c --quiet --strict - )
+
+# TODO: Mozilla does not currently publish per-tarball detached .asc signatures
+# for Developer Edition; verification chain is KEY → SHA512SUMS.asc → tarball.
+# If they begin publishing per-tarball sigs, add: gpg --verify <ff>.asc <ff>.
+
+# ---------------------------------------------------------------------------
+# VS Code
+# ---------------------------------------------------------------------------
 log "Verifying VS Code checksum..."
-[ -f "${VSCODE_TARBALL}" ] || { echo "Missing ${VSCODE_TARBALL}"; exit 1; }
+VSC_FILE=$(jq -r '.vscode.file'   "${MANIFEST}")
+VSC_SHA=$(jq  -r '.vscode.sha256' "${MANIFEST}")
 
-echo "${VSCODE_SHA256}  ${VSCODE_TARBALL}" | sha256sum -c -
+[[ -f "${VSC_DIR}/${VSC_FILE}" ]] || die "missing ${VSC_DIR}/${VSC_FILE}"
+[[ -f "${VSC_DIR}/SHA256" ]]      || die "missing ${VSC_DIR}/SHA256"
+
+# Strict cross-check between manifest and sidecar SHA256 file.
+SIDECAR_SHA=$(awk '{print $1; exit}' "${VSC_DIR}/SHA256")
+[[ "${SIDECAR_SHA}" == "${VSC_SHA}" ]] || die "VS Code manifest hash differs from SHA256 sidecar"
+( cd "${VSC_DIR}" && sha256sum -c --quiet --strict SHA256 )
+
+# ---------------------------------------------------------------------------
+# Void Linux live ISO
+# ---------------------------------------------------------------------------
+log "Verifying Void Linux live ISO signature and checksum..."
+ISO_FILE=$(jq -r '.void_iso.file'   "${MANIFEST}")
+ISO_SHA=$(jq  -r '.void_iso.sha256' "${MANIFEST}")
+
+[[ -f "${ISO_DIR}/KEY" ]]            || die "missing ${ISO_DIR}/KEY"
+[[ -f "${ISO_DIR}/sha256sum.txt" ]]  || die "missing ${ISO_DIR}/sha256sum.txt"
+[[ -f "${ISO_DIR}/sha256sum.sig" ]]  || die "missing ${ISO_DIR}/sha256sum.sig"
+[[ -f "${ISO_DIR}/${ISO_FILE}" ]]    || die "missing ${ISO_DIR}/${ISO_FILE}"
+
+gpg --homedir "${GNUPGHOME}" --batch --import "${ISO_DIR}/KEY" 2>/dev/null
+gpg --homedir "${GNUPGHOME}" --batch --verify \
+    "${ISO_DIR}/sha256sum.sig" "${ISO_DIR}/sha256sum.txt"
+
+# Locate the ISO line (handles "(<file>)", "*<file>", and " <file>" forms).
+SIGNED_ISO_SHA=$(awk -v n="${ISO_FILE}" '
+    $2=="("n")" || $2==n || $2=="*"n {print $1; exit}
+' "${ISO_DIR}/sha256sum.txt")
+if [[ -z "${SIGNED_ISO_SHA}" ]]; then
+    SIGNED_ISO_SHA=$(grep -E "[[:space:]][*]?${ISO_FILE}\$" "${ISO_DIR}/sha256sum.txt" \
+        | awk '{print $1}' | head -n1)
+fi
+[[ -n "${SIGNED_ISO_SHA}" ]] || die "no sha256sum.txt entry for ${ISO_FILE}"
+[[ "${SIGNED_ISO_SHA}" == "${ISO_SHA}" ]] || die "manifest ISO SHA differs from signed sha256sum.txt"
+
+( cd "${ISO_DIR}" && echo "${SIGNED_ISO_SHA}  ${ISO_FILE}" | sha256sum -c --quiet --strict - )
 
 log "Verification complete."

@@ -1,3 +1,5 @@
 output/
 .env
 logs/
+binaries/*
+!binaries/.gitkeep

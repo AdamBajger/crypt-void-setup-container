@@ -12,6 +12,7 @@ RUN xbps-install -yuS \
         cryptsetup \
         gnupg \
         curl \
+        jq \
         lvm2 \
         parted \
         dosfstools \

@@ -1,0 +1,24 @@
+#!/bin/sh
+# runit run script for void-firstboot.
+# Waits for network (DNS for flathub.org), runs the firstboot script once,
+# then quiesces so runit doesn't keep restarting it.
+
+exec 2>&1
+
+WAITED=0
+TIMEOUT=120
+until getent hosts flathub.org >/dev/null 2>&1; do
+  if [ "${WAITED}" -ge "${TIMEOUT}" ]; then
+    echo "void-firstboot: network wait timed out after ${TIMEOUT}s"
+    break
+  fi
+  sleep 2
+  WAITED=$((WAITED + 2))
+done
+
+if /usr/local/sbin/void-firstboot.sh; then
+  sv down void-firstboot 2>/dev/null || true
+  exec sleep 86400
+fi
+
+exit 1

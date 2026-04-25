@@ -2,6 +2,8 @@
 bash
 dbus
 elogind
+sudo
+linux-lts
 
 # KDE6 Plasma desktop environment
 kde-plasma
@@ -69,7 +71,7 @@ python3-setuptools
 uv
 
 # Input device managers
-Solaar
+solaar
 
 # System administration tools
 htop
@@ -78,7 +80,6 @@ lvm2
 mdadm
 cryptsetup
 libparted
-libparted-devel
 gvfs
 
 # Container, virtualization, and Kubernetes tools

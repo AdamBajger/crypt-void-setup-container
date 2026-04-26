@@ -100,11 +100,18 @@ usermod -a -G docker "${VOID_USERNAME}"
 # ---------------------------------------------------------------------------
 # NetworkManager: drop conflicting services, enable dbus
 # ---------------------------------------------------------------------------
-log "Removing conflicting network services (dhcpcd, wpa_supplicant)..."
-rm -f /var/service/dhcpcd 2>/dev/null || true
-rm -f /var/service/wpa_supplicant 2>/dev/null || true
+# /var/service is a symlink to /etc/runit/runsvdir/default; in the chroot
+# the target directory may not have been created yet. Ensure it exists and
+# write through the canonical path so a dangling /var/service symlink
+# doesn't trip ln.
+RUNSVDIR=/etc/runit/runsvdir/default
+mkdir -p "${RUNSVDIR}"
 
-ln -sf /etc/sv/dbus /var/service/dbus
+log "Removing conflicting network services (dhcpcd, wpa_supplicant)..."
+rm -f "${RUNSVDIR}/dhcpcd" /var/service/dhcpcd 2>/dev/null || true
+rm -f "${RUNSVDIR}/wpa_supplicant" /var/service/wpa_supplicant 2>/dev/null || true
+
+ln -sf /etc/sv/dbus "${RUNSVDIR}/dbus"
 
 # ---------------------------------------------------------------------------
 # PipeWire + WirePlumber + ALSA glue
@@ -137,7 +144,7 @@ EOF
 # ---------------------------------------------------------------------------
 # Time sync
 # ---------------------------------------------------------------------------
-ln -sf /etc/sv/chronyd /var/service/chronyd
+ln -sf /etc/sv/chronyd "${RUNSVDIR}/chronyd"
 
 # ---------------------------------------------------------------------------
 # Shell + service wiring
@@ -145,15 +152,15 @@ ln -sf /etc/sv/chronyd /var/service/chronyd
 chsh -s /bin/bash "${VOID_USERNAME}"
 
 log "Disabling acpid to avoid conflicts with elogind..."
-rm -f /var/service/acpid
+rm -f "${RUNSVDIR}/acpid" /var/service/acpid 2>/dev/null || true
 
 log "Enabling system services..."
-ln -sf /etc/sv/sddm           /var/service/sddm
-ln -sf /etc/sv/NetworkManager /var/service/NetworkManager
-ln -sf /etc/sv/tlp            /var/service/tlp
-ln -sf /etc/sv/tlp-pd         /var/service/tlp-pd
-ln -sf /etc/sv/bluetoothd     /var/service/bluetoothd
-ln -sf /etc/sv/docker         /var/service/docker
+ln -sf /etc/sv/sddm           "${RUNSVDIR}/sddm"
+ln -sf /etc/sv/NetworkManager "${RUNSVDIR}/NetworkManager"
+ln -sf /etc/sv/tlp            "${RUNSVDIR}/tlp"
+ln -sf /etc/sv/tlp-pd         "${RUNSVDIR}/tlp-pd"
+ln -sf /etc/sv/bluetoothd     "${RUNSVDIR}/bluetoothd"
+ln -sf /etc/sv/docker         "${RUNSVDIR}/docker"
 
 # ---------------------------------------------------------------------------
 # First-boot service: completes Flatpak install on real hardware where

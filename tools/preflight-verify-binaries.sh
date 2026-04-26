@@ -94,14 +94,11 @@ ISO_SHA=$(jq  -r '.void_iso.sha256' "${MANIFEST}")
 [[ -f "${ISO_DIR}/sha256sum.txt" ]]  || die "missing ${ISO_DIR}/sha256sum.txt"
 [[ -f "${ISO_DIR}/${ISO_FILE}" ]]    || die "missing ${ISO_DIR}/${ISO_FILE}"
 
-# Locate the ISO line (handles "(<file>)", "*<file>", and " <file>" forms).
+# Void uses BSD style ("SHA256 (file) = hash"); accept GNU style as fallback.
 LISTED_ISO_SHA=$(awk -v n="${ISO_FILE}" '
-    $2=="("n")" || $2==n || $2=="*"n {print $1; exit}
+    $1=="SHA256" && $2=="("n")"          {print $4; exit}
+    $2==n || $2=="*"n || $2=="("n")"     {print $1; exit}
 ' "${ISO_DIR}/sha256sum.txt")
-if [[ -z "${LISTED_ISO_SHA}" ]]; then
-    LISTED_ISO_SHA=$(grep -E "[[:space:]][*]?${ISO_FILE}\$" "${ISO_DIR}/sha256sum.txt" \
-        | awk '{print $1}' | head -n1)
-fi
 [[ -n "${LISTED_ISO_SHA}" ]] || die "no sha256sum.txt entry for ${ISO_FILE}"
 [[ "${LISTED_ISO_SHA}" == "${ISO_SHA}" ]] || die "manifest ISO SHA differs from sha256sum.txt"
 

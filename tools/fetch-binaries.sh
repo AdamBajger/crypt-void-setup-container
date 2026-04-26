@@ -124,13 +124,11 @@ log "  ISO: ${ISO_NAME}"
 # so we only fetch the sums file and verify the SHA256 of the ISO.
 fetch_to "${ISO_INDEX_URL}sha256sum.txt" "${ISO_DIR}/sha256sum.txt"
 
-ISO_EXPECTED_SHA256=$(awk -v n="${ISO_NAME}" '$2=="("n")" || $2==n {print $1; exit}' "${ISO_DIR}/sha256sum.txt" \
-    || true)
-# Fallback: some sha256sum.txt files use "*<file>" or just "<file>" on the second column
-if [[ -z "${ISO_EXPECTED_SHA256}" ]]; then
-    ISO_EXPECTED_SHA256=$(grep -E "[[:space:]][*]?${ISO_NAME}\$" "${ISO_DIR}/sha256sum.txt" \
-        | awk '{print $1}' | head -n1)
-fi
+# Void uses BSD style ("SHA256 (file) = hash"); accept GNU style as fallback.
+ISO_EXPECTED_SHA256=$(awk -v n="${ISO_NAME}" '
+    $1=="SHA256" && $2=="("n")"          {print $4; exit}
+    $2==n || $2=="*"n || $2=="("n")"     {print $1; exit}
+' "${ISO_DIR}/sha256sum.txt")
 [[ -n "${ISO_EXPECTED_SHA256}" ]] || die "no sha256sum.txt entry for ${ISO_NAME}"
 
 fetch_to "${ISO_INDEX_URL}${ISO_NAME}" "${ISO_DIR}/${ISO_NAME}" "sha256:${ISO_EXPECTED_SHA256}"

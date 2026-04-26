@@ -109,24 +109,20 @@ log "Resolving latest Void Linux x86_64 live ISO..."
 ISO_INDEX_URL="https://repo-default.voidlinux.org/live/current/"
 ISO_INDEX=$("${CURL[@]}" "${ISO_INDEX_URL}")
 
-# Pick newest void-live-x86_64-*.iso (NOT musl).
+# Pick newest void-live-x86_64-<DATE>-base.iso. Prefer base over xfce (the
+# QEMU CI flow doesn't need a desktop in the live env), and exclude musl.
 ISO_NAME=$(echo "${ISO_INDEX}" \
-    | grep -oE 'void-live-x86_64-[0-9]{8}[^"<]*\.iso' \
+    | grep -oE 'void-live-x86_64-[0-9]{8}-base\.iso' \
     | grep -v musl \
     | sort -u | sort -V | tail -n1)
-[[ -n "${ISO_NAME}" ]] || die "could not find a void-live-x86_64 ISO at ${ISO_INDEX_URL}"
+[[ -n "${ISO_NAME}" ]] || die "could not find a void-live-x86_64-*-base.iso at ${ISO_INDEX_URL}"
 log "  ISO: ${ISO_NAME}"
 
-# Find the release-signing public key file (e.g. void-release-20240301.asc).
-KEY_NAME=$(echo "${ISO_INDEX}" \
-    | grep -oE 'void-release-[0-9]{8}\.asc' \
-    | sort -u | sort -V | tail -n1)
-[[ -n "${KEY_NAME}" ]] || die "could not find a void-release-*.asc key at ${ISO_INDEX_URL}"
-log "  Key: ${KEY_NAME}"
-
+# Void signs sha256sum.txt with minisign using a per-release ephemeral key
+# whose .pub is not published in any canonical location. Without an
+# OOB-trusted pubkey, sig verification adds no real trust over HTTPS+SHA256,
+# so we only fetch the sums file and verify the SHA256 of the ISO.
 fetch_to "${ISO_INDEX_URL}sha256sum.txt" "${ISO_DIR}/sha256sum.txt"
-fetch_to "${ISO_INDEX_URL}sha256sum.sig" "${ISO_DIR}/sha256sum.sig"
-fetch_to "${ISO_INDEX_URL}${KEY_NAME}"   "${ISO_DIR}/KEY"
 
 ISO_EXPECTED_SHA256=$(awk -v n="${ISO_NAME}" '$2=="("n")" || $2==n {print $1; exit}' "${ISO_DIR}/sha256sum.txt" \
     || true)
@@ -162,7 +158,6 @@ jq -n \
     --arg iso_url "${ISO_INDEX_URL}${ISO_NAME}" \
     --arg iso_file "${ISO_NAME}" \
     --arg iso_sha "${ISO_EXPECTED_SHA256}" \
-    --arg iso_key "${KEY_NAME}" \
     '{
        firefox_developer: {
          version: $ff_ver, url: $ff_url, file: $ff_file,
@@ -172,8 +167,7 @@ jq -n \
          version: $vsc_ver, url: $vsc_url, file: $vsc_file, sha256: $vsc_sha
        },
        void_iso: {
-         version: $iso_ver, url: $iso_url, file: $iso_file,
-         sha256: $iso_sha, key_file: $iso_key
+         version: $iso_ver, url: $iso_url, file: $iso_file, sha256: $iso_sha
        }
      }' > "${MANIFEST}"
 

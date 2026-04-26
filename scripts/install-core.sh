@@ -30,10 +30,10 @@ partition_device() {
 setup_luks() {
     local luks_partition="$1"
 
-    export VOID_LUKS_DEVICE_NAME="${VOID_LUKS_DEVICE_NAME:-void-luks}"
-    export VOID_LUKS_MAPPER="/dev/mapper/${VOID_LUKS_DEVICE_NAME}"
-    # Back-compat alias for callers that still reference the old name.
-    export VOID_LUKS_DEVICE_PATH="${VOID_LUKS_MAPPER}"
+    # VOID_LUKS_DEVICE_NAME is declared (readonly) and exported by entrypoint.sh.
+    VOID_LUKS_MAPPER="/dev/mapper/${VOID_LUKS_DEVICE_NAME}"
+    VOID_LUKS_DEVICE_PATH="${VOID_LUKS_MAPPER}"
+    export VOID_LUKS_MAPPER VOID_LUKS_DEVICE_PATH
 
     log "Discard-wiping ${luks_partition} to reduce prior-data remanence..."
     blkdiscard -f "${luks_partition}" || log "  (blkdiscard not supported on this platform, skipping)"

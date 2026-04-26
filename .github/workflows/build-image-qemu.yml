@@ -45,6 +45,10 @@ jobs:
       - name: Verify KVM availability
         run: |
           if [ -e /dev/kvm ]; then
+            # Hosted runners ship /dev/kvm as 0660 root:kvm. The runner user is
+            # not in the kvm group, so qemu would silently fall back to TCG and
+            # the install would never finish in 2h. Open the perms instead.
+            sudo chmod 666 /dev/kvm
             echo "KVM available"
             ls -l /dev/kvm
           else

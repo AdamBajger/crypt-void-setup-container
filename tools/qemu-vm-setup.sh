@@ -10,8 +10,19 @@
 
 set -euo pipefail
 
-QEMU_OVMF_CODE="${QEMU_OVMF_CODE:-/usr/share/OVMF/OVMF_CODE.fd}"
-QEMU_OVMF_VARS_TEMPLATE="${QEMU_OVMF_VARS_TEMPLATE:-/usr/share/OVMF/OVMF_VARS.fd}"
+# Distros disagree on OVMF filenames. Probe known locations; the env vars
+# still let a caller override.
+_qemu_first_existing() { for f in "$@"; do [[ -f "$f" ]] && { echo "$f"; return; }; done; }
+QEMU_OVMF_CODE="${QEMU_OVMF_CODE:-$(_qemu_first_existing \
+    /usr/share/OVMF/OVMF_CODE_4M.fd \
+    /usr/share/OVMF/OVMF_CODE.fd \
+    /usr/share/edk2-ovmf/x64/OVMF_CODE.fd \
+    /usr/share/edk2/ovmf/OVMF_CODE.fd)}"
+QEMU_OVMF_VARS_TEMPLATE="${QEMU_OVMF_VARS_TEMPLATE:-$(_qemu_first_existing \
+    /usr/share/OVMF/OVMF_VARS_4M.fd \
+    /usr/share/OVMF/OVMF_VARS.fd \
+    /usr/share/edk2-ovmf/x64/OVMF_VARS.fd \
+    /usr/share/edk2/ovmf/OVMF_VARS.fd)}"
 QEMU_RAM="${QEMU_RAM:-4096}"
 QEMU_VCPUS="${QEMU_VCPUS:-4}"
 QEMU_WORK_DIR="${QEMU_WORK_DIR:-$(pwd)/output/qemu-work}"

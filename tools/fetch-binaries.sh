@@ -76,7 +76,7 @@ FF_SHA_PATH="linux-x86_64/en-US/${FF_TARBALL_NAME}"
 # SHA512SUMS first — we'll learn the expected tarball hash from it.
 fetch_to "${FF_BASE}/SHA512SUMS"     "${FF_DIR}/SHA512SUMS"
 fetch_to "${FF_BASE}/SHA512SUMS.asc" "${FF_DIR}/SHA512SUMS.asc"
-fetch_to "https://archive.mozilla.org/pub/firefox/releases/KEY" "${FF_DIR}/KEY"
+fetch_to "${FF_BASE}/KEY" "${FF_DIR}/KEY"
 
 FF_EXPECTED_SHA512=$(awk -v p="${FF_SHA_PATH}" '$2==p {print $1; exit}' "${FF_DIR}/SHA512SUMS")
 [[ -n "${FF_EXPECTED_SHA512}" ]] || die "no SHA512SUMS line for ${FF_SHA_PATH}"

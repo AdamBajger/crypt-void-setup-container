@@ -71,7 +71,7 @@ python3-setuptools
 uv
 
 # Input device managers
-solaar
+Solaar
 
 # System administration tools
 htop

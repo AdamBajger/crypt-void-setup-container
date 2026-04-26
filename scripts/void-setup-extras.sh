@@ -104,7 +104,7 @@ log "Removing conflicting network services (dhcpcd, wpa_supplicant)..."
 rm -f /var/service/dhcpcd 2>/dev/null || true
 rm -f /var/service/wpa_supplicant 2>/dev/null || true
 
-ln -sf /etc/sv/dbus /var/service/
+ln -sf /etc/sv/dbus /var/service/dbus
 
 # ---------------------------------------------------------------------------
 # PipeWire + WirePlumber + ALSA glue
@@ -137,7 +137,7 @@ EOF
 # ---------------------------------------------------------------------------
 # Time sync
 # ---------------------------------------------------------------------------
-ln -sf /etc/sv/chronyd /var/service/
+ln -sf /etc/sv/chronyd /var/service/chronyd
 
 # ---------------------------------------------------------------------------
 # Shell + service wiring
@@ -148,12 +148,12 @@ log "Disabling acpid to avoid conflicts with elogind..."
 rm -f /var/service/acpid
 
 log "Enabling system services..."
-ln -sf /etc/sv/sddm           /var/service/
-ln -sf /etc/sv/NetworkManager /var/service/
-ln -sf /etc/sv/tlp            /var/service/
-ln -sf /etc/sv/tlp-pd         /var/service/
-ln -sf /etc/sv/bluetoothd     /var/service/
-ln -sf /etc/sv/docker         /var/service/
+ln -sf /etc/sv/sddm           /var/service/sddm
+ln -sf /etc/sv/NetworkManager /var/service/NetworkManager
+ln -sf /etc/sv/tlp            /var/service/tlp
+ln -sf /etc/sv/tlp-pd         /var/service/tlp-pd
+ln -sf /etc/sv/bluetoothd     /var/service/bluetoothd
+ln -sf /etc/sv/docker         /var/service/docker
 
 # ---------------------------------------------------------------------------
 # First-boot service: completes Flatpak install on real hardware where

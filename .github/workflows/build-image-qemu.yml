@@ -81,6 +81,7 @@ jobs:
           ls -lh output/void-vm.raw.zst
 
       - name: Upload image and logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: void-image-qemu-${{ github.sha }}
@@ -88,4 +89,4 @@ jobs:
             output/void-vm.raw.zst
             logs/
           retention-days: 14
-          if-no-files-found: error
+          if-no-files-found: warn

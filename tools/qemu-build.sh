@@ -64,8 +64,9 @@ STATUS_FILE="${OUTPUT_DIR}/install-status.txt"
 rm -f "${STATUS_FILE}" "${SIGNAL_SOCK}"
 
 cleanup() {
+    [[ -n "${TAIL_PID:-}"  ]] && kill "${TAIL_PID}"  2>/dev/null || true
     [[ -n "${SOCAT_PID:-}" ]] && kill "${SOCAT_PID}" 2>/dev/null || true
-    [[ -n "${QEMU_PID:-}"  ]] && kill "${QEMU_PID}"  2>/dev/null || true
+    [[ -n "${QEMU_PID:-}"  ]] && { kill "${QEMU_PID}" 2>/dev/null || true; sleep 1; kill -KILL "${QEMU_PID}" 2>/dev/null || true; }
     rm -f "${SIGNAL_SOCK}"
 }
 trap cleanup EXIT
@@ -84,8 +85,15 @@ done
 socat -u "UNIX-CONNECT:${SIGNAL_SOCK}" "OPEN:${STATUS_FILE},creat,append" &
 SOCAT_PID=$!
 
+# Stream the in-VM serial console live so progress is visible in CI output.
+touch "${INSTALL_LOG}"
+( tail -n +1 -F "${INSTALL_LOG}" 2>/dev/null | sed 's/^/[guest] /' ) &
+TAIL_PID=$!
+
 log "Waiting up to ${INSTALL_TIMEOUT}s for INSTALL_OK / INSTALL_FAIL..."
-deadline=$(( $(date +%s) + INSTALL_TIMEOUT ))
+start_ts=$(date +%s)
+deadline=$(( start_ts + INSTALL_TIMEOUT ))
+last_heartbeat=${start_ts}
 result=""
 while (( $(date +%s) < deadline )); do
     if [[ -s "${STATUS_FILE}" ]]; then
@@ -101,14 +109,29 @@ while (( $(date +%s) < deadline )); do
         fi
         break
     fi
+    now=$(date +%s)
+    if (( now - last_heartbeat >= 300 )); then
+        log "still waiting ($((now - start_ts))s elapsed of ${INSTALL_TIMEOUT}s budget)..."
+        last_heartbeat=${now}
+    fi
     sleep 5
 done
 
-# Give QEMU a moment to finish its scheduled poweroff cleanly.
+# Give QEMU up to 30s to power off cleanly (autorun calls poweroff after
+# signaling); SIGKILL after that so we never block on a stuck guest.
+for _ in $(seq 1 30); do
+    kill -0 "${QEMU_PID}" 2>/dev/null || break
+    sleep 1
+done
+kill -TERM "${QEMU_PID}" 2>/dev/null || true
+sleep 2
+kill -KILL "${QEMU_PID}" 2>/dev/null || true
 wait "${QEMU_PID}" 2>/dev/null || true
 QEMU_PID=""
 kill "${SOCAT_PID}" 2>/dev/null || true
 SOCAT_PID=""
+kill "${TAIL_PID}"  2>/dev/null || true
+TAIL_PID=""
 
 case "${result}" in
     OK)   log "Install signalled OK." ;;

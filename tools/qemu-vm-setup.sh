@@ -98,13 +98,28 @@ qemu_extract_live_boot() {
     xorriso -osirrox on -indev "${iso}" -extract /boot/grub/grub_void.cfg "${grubcfg}" >/dev/null 2>&1 || true
     [[ -s "${grubcfg}" ]] || xorriso -osirrox on -indev "${iso}" -extract /boot/grub/grub.cfg "${grubcfg}" >/dev/null 2>&1 || true
     if [[ -s "${grubcfg}" ]]; then
-        # Take the first `linux`/`linuxefi` line and drop its first two tokens
-        # (the `linux` keyword and the kernel-image path), leaving the cmdline.
-        base=$(grep -m1 -E '^[[:space:]]*linux(efi)?[[:space:]]' "${grubcfg}" \
-            | sed -E 's@^[[:space:]]*linux(efi)?[[:space:]]+[^[:space:]]+[[:space:]]+@@') || base=""
+        # Take the first `linux`/`linuxefi` directive, joining GRUB's backslash
+        # line-continuations (void's grub.cfg wraps the long cmdline across
+        # several lines), then drop the first two tokens (the `linux` keyword
+        # and the kernel-image path), leaving the cmdline.
+        base=$(awk '
+            /^[[:space:]]*linux(efi)?[[:space:]]/ {
+                line=$0
+                while (line ~ /\\[[:space:]]*$/) {
+                    sub(/\\[[:space:]]*$/, "", line)
+                    if ((getline nxt) <= 0) break
+                    line = line " " nxt
+                }
+                sub(/^[[:space:]]*linux(efi)?[[:space:]]+[^[:space:]]+[[:space:]]+/, "", line)
+                print line
+                exit
+            }
+        ' "${grubcfg}") || base=""
     fi
-    if [[ -z "${base}" ]]; then
-        _qemu_log "WARNING: could not parse live cmdline from grub config; using a default."
+    # Only trust a parsed cmdline that actually names a root device; otherwise
+    # fall back to a known-good void-live default.
+    if [[ "${base}" != *root=* ]]; then
+        _qemu_log "WARNING: could not parse a usable live cmdline from grub config; using a default."
         base="root=live:CDLABEL=VOID_LIVE ro init=/sbin/init rd.luks=0 rd.md=0 rd.dm=0 loglevel=4 gpt rd.live.overlay.overlayfs=1"
     fi
     # Drop any console= the ISO set so ours win, then put ttyS0 last (primary).

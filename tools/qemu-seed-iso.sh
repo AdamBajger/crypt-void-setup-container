@@ -148,7 +148,10 @@ done
 # The minimal Void "base" live ISO does not ship the partitioning/crypto/LVM
 # tools the installer needs (parted, cryptsetup, lvm2, mkfs.*). Pull them into
 # the live environment (writable overlay) before handing off.
-log "Installing installer dependencies into the live environment..."
+# xbps refuses to install anything until it self-updates when the live ISO's
+# xbps is older than the `current` repo ("The 'xbps' package must be updated").
+log "Updating xbps, then installing installer dependencies into the live env..."
+xbps-install -Suy xbps || log "WARNING: xbps self-update failed"
 xbps-install -Sy parted cryptsetup lvm2 dosfstools e2fsprogs gptfdisk \
     || log "WARNING: xbps-install of installer deps failed (install may abort)"
 

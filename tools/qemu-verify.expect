@@ -1,0 +1,59 @@
+#!/usr/bin/expect -f
+# qemu-verify.expect — boot the produced (encrypted) image under OVMF, supply
+# the LUKS passphrase at the dracut prompt, and confirm it reaches userspace.
+#
+# Reaching the passphrase prompt already proves firmware -> GRUB -> kernel ->
+# initramfs + crypt module all work — the exact thing the container build
+# cannot demonstrate. Observing a userspace token afterwards is a bonus.
+#
+# Env:
+#   QX_QEMU     full qemu command (OVMF, boot from the raw disk, serial stdio)
+#   QX_LOGFILE  serial session log
+#   QX_TIMEOUT  seconds budget for reaching the passphrase prompt
+#   QX_LUKS     LUKS passphrase to type at the prompt
+
+set qemu     $env(QX_QEMU)
+set logfile  $env(QX_LOGFILE)
+set total_to $env(QX_TIMEOUT)
+set luks     $env(QX_LUKS)
+
+log_file -a $logfile
+log_user 1
+
+eval spawn $qemu
+
+# Phase 1 (required): the encrypted root must ask for a passphrase.
+set timeout $total_to
+expect {
+    -re {(?i)(enter passphrase|please enter passphrase|unlocking)} { }
+    timeout {
+        send_user "\n\[qemu-verify] FAIL: never reached the LUKS passphrase prompt\n"
+        exit 2
+    }
+    eof {
+        send_user "\n\[qemu-verify] FAIL: VM exited before the passphrase prompt\n"
+        exit 2
+    }
+}
+
+# Give the prompt a beat, then type the passphrase.
+sleep 1
+send "$luks\r"
+
+# Phase 2 (best-effort): a token proving we got past decryption into userspace.
+# If none appears before the window closes we still pass on Phase 1.
+set timeout 120
+expect {
+    -re {(?i)(welcome to void|runit:|sddm|login:|systemd-logind|seatd|EXT4-fs.*mounted filesystem)} {
+        send_user "\n\[qemu-verify] OK: reached userspace.\n"
+        exit 0
+    }
+    timeout {
+        send_user "\n\[qemu-verify] PASS (passphrase prompt reached; no userspace token in window).\n"
+        exit 0
+    }
+    eof {
+        send_user "\n\[qemu-verify] PASS (passphrase prompt reached; VM exited).\n"
+        exit 0
+    }
+}

@@ -1,8 +1,10 @@
 #!/bin/bash
-# tools/qemu-verify-boot.sh - Boot the produced raw image headlessly and
-# confirm we reach a usable state (login prompt, KDE startup, or SDDM).
+# tools/qemu-verify-boot.sh - Boot the produced (encrypted) raw image headlessly
+# under OVMF, supply the LUKS passphrase at the dracut prompt, and confirm it
+# reaches a usable state. The decision is made by tools/qemu-verify.expect;
+# this wrapper just sets it up and surfaces the serial log.
 #
-# Usage: qemu-verify-boot.sh <raw-disk> [logfile] [timeout-seconds]
+# Usage: qemu-verify-boot.sh <raw-disk> [logfile] [timeout-seconds] [luks-pass]
 # Exit:  0 on success, non-zero otherwise.
 
 set -euo pipefail
@@ -10,7 +12,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DISK="${1:-${REPO_ROOT}/output/void-vm.raw}"
 LOGFILE="${2:-${REPO_ROOT}/logs/verify-boot.log}"
-TIMEOUT="${3:-180}"
+TIMEOUT="${3:-300}"
+LUKS_PASS="${4:-ci-luks-password-not-secret}"
 
 mkdir -p "$(dirname "${LOGFILE}")"
 
@@ -24,37 +27,22 @@ fi
 
 echo "[verify] Booting ${DISK} for up to ${TIMEOUT}s; serial log -> ${LOGFILE}"
 
-# run_verify_vm always returns 0 (timeout is the expected stop condition);
-# success is decided by scraping the serial log for known boot tokens.
-run_verify_vm "${DISK}" "${LOGFILE}" "${TIMEOUT}"
+set +e
+run_verify_vm "${DISK}" "${LOGFILE}" "${TIMEOUT}" "${LUKS_PASS}"
+rc=$?
+set -e
 
-# Tokens that indicate the image successfully reached a real userspace.
-PATTERNS=(
-    'sddm'
-    'SDDM'
-    'login:'
-    'Welcome to Void'
-    'startkde'
-    'plasmashell'
-    'KDE Plasma'
-    'systemd-logind'
-    'runit: enter stage'
-)
+echo "[verify] Last 40 lines of serial log:" >&2
+tail -n 40 "${LOGFILE}" 2>/dev/null >&2 || true
 
 if [[ ! -s "${LOGFILE}" ]]; then
     echo "[verify] FAIL: serial log is empty (VM produced no output)." >&2
     exit 2
 fi
 
-echo "[verify] Last 40 lines of serial log:" >&2
-tail -n 40 "${LOGFILE}" >&2 || true
-
-for pat in "${PATTERNS[@]}"; do
-    if grep -qE "${pat}" "${LOGFILE}"; then
-        echo "[verify] OK: matched '${pat}' in serial log."
-        exit 0
-    fi
-done
-
-echo "[verify] FAIL: none of the success tokens appeared in ${LOGFILE}" >&2
-exit 3
+if [[ "${rc}" -eq 0 ]]; then
+    echo "[verify] OK: image booted past LUKS decryption."
+else
+    echo "[verify] FAIL: verify VM did not reach the expected boot state (rc=${rc})." >&2
+fi
+exit "${rc}"

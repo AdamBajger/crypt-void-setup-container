@@ -155,8 +155,11 @@ run_install_vm() {
     cmd+=" -display none -serial stdio -monitor none -no-reboot"
 
     : >"${logfile}"
+    # Hard wall-clock cap: expect's own timeout is an *inactivity* timeout, so a
+    # guest that keeps emitting output could otherwise run until the CI job is
+    # killed. Bound it (+15 min slack over the install budget) and SIGKILL.
     QX_QEMU="${cmd}" QX_LOGFILE="${logfile}" QX_TIMEOUT="${timeout}" \
-        expect -f "${REPO_ROOT}/tools/qemu-install.expect"
+        timeout -s KILL "$(( timeout + 900 ))" expect -f "${REPO_ROOT}/tools/qemu-install.expect"
 }
 
 run_verify_vm() {

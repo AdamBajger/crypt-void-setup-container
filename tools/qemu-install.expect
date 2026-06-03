@@ -29,28 +29,20 @@ eval spawn $qemu
 # OUTPUT of an arithmetic echo. The value 42 appears only in the command's
 # output, never in the echoed command text, so it can't false-match the banner
 # or the echoed line.
-set timeout $login_to
+# Match on bare substrings (no "$" end-anchor): the prompts can carry trailing
+# bytes that defeat anchoring, and login's program times out 60s after the
+# username, so we must answer the password promptly. React to login:/password:
+# and prove a shell by the OUTPUT of an arithmetic echo (the literal 42 appears
+# only in the command's output, never in the echoed command or the MOTD banner).
+set timeout 120
 set ready 0
-for {set attempt 0} {$attempt < 8} {incr attempt} {
+for {set attempt 0} {$attempt < 12 && !$ready} {incr attempt} {
     expect {
-        -re {VOIDMARK=42=END}  { set ready 1; break }
-        -re {(?i)login: *$}    { send "root\r" }
-        timeout                { send_user "\n\[qemu-install] no login prompt yet\n"; continue }
-        eof                    { send_user "\n\[qemu-install] QEMU exited before login\n"; exit 4 }
-    }
-    set timeout 30
-    expect {
-        -re {(?i)password: *$} { send "voidlinux\r" }
-        -re {(?i)login: *$}    { set timeout $login_to; continue }
-        timeout                { set timeout $login_to; continue }
-    }
-    # Arithmetic so the literal "42" is only in the shell's output line.
-    send "echo VOIDMARK=\$((21*2))=END\r"
-    expect {
-        -re {VOIDMARK=42=END}      { set ready 1; break }
-        -re {(?i)login incorrect}  { set timeout $login_to; continue }
-        -re {(?i)login: *$}        { set timeout $login_to; send "root\r"; continue }
-        timeout                    { set timeout $login_to; continue }
+        -re {VOIDMARK=42=END} { set ready 1 }
+        -re {assword:}        { send "voidlinux\recho VOIDMARK=\$((21*2))=END\r"; exp_continue }
+        -re {ogin:}           { send "root\r"; exp_continue }
+        timeout               { send "\recho VOIDMARK=\$((21*2))=END\r" }
+        eof                   { send_user "\n\[qemu-install] QEMU exited before shell\n"; exit 4 }
     }
 }
 if {!$ready} { send_user "\n\[qemu-install] FAILED to log in / reach a shell\n"; exit 2 }

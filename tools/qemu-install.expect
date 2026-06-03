@@ -1,0 +1,63 @@
+#!/usr/bin/expect -f
+# qemu-install.expect — boot the Void live VM, log in over the serial console,
+# launch the seed autorun.sh, and decide the outcome from its sentinel.
+#
+# Driven entirely by environment variables:
+#   QX_QEMU           full qemu-system-x86_64 command (serial on stdio)
+#   QX_LOGFILE        file to mirror the full serial session into
+#   QX_TIMEOUT        seconds to allow for the whole install
+#   QX_LOGIN_TIMEOUT  seconds to allow for reaching a shell (default 600)
+
+set qemu     $env(QX_QEMU)
+set logfile  $env(QX_LOGFILE)
+set total_to $env(QX_TIMEOUT)
+set login_to [expr {[info exists env(QX_LOGIN_TIMEOUT)] ? $env(QX_LOGIN_TIMEOUT) : 600}]
+
+# Mirror everything to the logfile (append) and to our stdout (CI visibility).
+log_file -a $logfile
+log_user 1
+
+eval spawn $qemu
+
+# --- Phase 1: reach a root shell -------------------------------------------
+# Handles the explicit login (root / voidlinux), the live.autologin-as-root
+# case (straight to "# "), and autologin-as-anon (escalate via su).
+set timeout $login_to
+expect {
+    -re {(?i)login: $}    { send "root\r";      exp_continue }
+    -re {(?i)password: $} { send "voidlinux\r"; exp_continue }
+    -re {# $}             { }
+    -re {\$ $}            { send "su -\r";       exp_continue }
+    timeout { send_user "\n\[qemu-install] TIMEOUT waiting for a shell\n"; exit 2 }
+    eof     { send_user "\n\[qemu-install] QEMU exited before a shell\n";  exit 4 }
+}
+
+# Establish a deterministic prompt so subsequent waits are unambiguous.
+send "export PS1='QXREADY# '\r"
+set timeout 60
+expect {
+    -re {QXREADY# $} { }
+    timeout { send_user "\n\[qemu-install] TIMEOUT establishing prompt\n"; exit 2 }
+}
+
+# --- Phase 2: launch the installer -----------------------------------------
+# Mount the seed medium (autorun.sh self-mounts too, but it lives on the seed
+# so we must reach it first), then run it. Its output streams over the console.
+send "for d in /dev/sr0 /dev/sr1 /dev/sr2 /dev/vdb /dev/vdc; do blkid -o value -s LABEL \$d 2>/dev/null | grep -qx VOIDSEED && { mkdir -p /mnt/seed; mount -o ro \$d /mnt/seed; break; }; done\r"
+expect -re {QXREADY# $}
+send "if test -f /mnt/seed/autorun.sh; then bash /mnt/seed/autorun.sh; else echo MISSING_SEED_AUTORUN; fi\r"
+
+# --- Phase 3: await the result sentinel ------------------------------------
+set timeout $total_to
+expect {
+    -re {VOID_INSTALL_RESULT: OK}   { send_user "\n\[qemu-install] install OK\n" }
+    -re {VOID_INSTALL_RESULT: FAIL} { send_user "\n\[qemu-install] install FAILED\n"; exit 1 }
+    -re {MISSING_SEED_AUTORUN}      { send_user "\n\[qemu-install] seed autorun.sh not found\n"; exit 5 }
+    timeout { send_user "\n\[qemu-install] TIMEOUT during install\n"; exit 3 }
+    eof     { send_user "\n\[qemu-install] QEMU exited without a result\n"; exit 4 }
+}
+
+# autorun.sh powers the guest off after signalling; let qemu wind down.
+set timeout 180
+expect eof
+exit 0

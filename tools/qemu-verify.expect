@@ -31,7 +31,7 @@ set timeout $total_to
 expect {
     # A passphrase prompt (GRUB's or dracut's). Answer it, but cap retries so a
     # wrong passphrase can't loop forever.
-    -re {(?i)(enter passphrase|please enter passphrase|unlocking|passphrase for)} {
+    -re {(?i)(enter passphrase|please enter passphrase|passphrase for)} {
         set saw_prompt 1
         incr sends
         if {$sends > 6} {

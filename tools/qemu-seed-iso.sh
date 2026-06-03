@@ -128,8 +128,9 @@ export LUKS_PASSWORD="${LUKS_PASSWORD:-ci-luks-password-not-secret}"
 export ROOT_PASSWORD="${ROOT_PASSWORD:-ci-root-password-not-secret}"
 export USER_PASSWORD="${USER_PASSWORD:-ci-user-password-not-secret}"
 
-# The live ISO is the boot medium, not an install input, and is not shipped on
-# the seed; it was already verified on the host. Skip re-verifying it in-VM.
+# Binaries were fully verified on the host before this seed was built, and the
+# minimal live ISO has no jq/gpg — so skip the (redundant) in-VM preflight.
+export VOID_SKIP_PREFLIGHT=1
 export PREFLIGHT_SKIP_ISO=1
 
 # base-system installation pulls from the network repo, so make sure the

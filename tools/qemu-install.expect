@@ -55,11 +55,17 @@ expect {
     timeout { send_user "\n\[qemu-install] TIMEOUT pinning prompt\n"; exit 2 }
 }
 
-# --- Phase 2: launch the installer -----------------------------------------
-# Mount the seed medium (autorun.sh self-mounts too, but it lives on the seed
-# so we must reach it first), then run it. Its output streams over the console.
-send "for d in /dev/sr0 /dev/sr1 /dev/sr2 /dev/vdb /dev/vdc; do blkid -o value -s LABEL \$d 2>/dev/null | grep -qx VOIDSEED && { mkdir -p /mnt/seed; mount -o ro \$d /mnt/seed; break; }; done\r"
-expect -re {QXREADY# $}
+# --- Phase 2: locate + mount the seed medium -------------------------------
+# autorun.sh lives on the seed, so we must mount it first. Locate it by label
+# (blkid -L), and dump blkid + the relevant device nodes so a failure here is
+# diagnosable from the serial log instead of a blind "not found".
+send "blkid; ls -l /dev/sr* /dev/vd* 2>/dev/null; S=\$(blkid -L VOIDSEED); echo SEEDDEV=\$S; mkdir -p /mnt/seed; mount -o ro \$S /mnt/seed 2>&1; echo SEED_PROBE_DONE\r"
+expect {
+    -re {SEED_PROBE_DONE}  { }
+    timeout { send_user "\n\[qemu-install] TIMEOUT probing seed\n"; exit 2 }
+}
+
+# --- Phase 3: launch the installer -----------------------------------------
 send "if test -f /mnt/seed/autorun.sh; then bash /mnt/seed/autorun.sh; else echo MISSING_SEED_AUTORUN; fi\r"
 
 # --- Phase 3: await the result sentinel ------------------------------------

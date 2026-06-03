@@ -150,7 +150,10 @@ run_install_vm() {
     cmd+=" -kernel ${QEMU_KERNEL} -initrd ${QEMU_INITRD} -append \"${QEMU_APPEND}\""
     cmd+=" -drive if=virtio,format=raw,file=${disk},cache=none,discard=unmap"
     cmd+=" -drive media=cdrom,readonly=on,file=${live_iso}"
-    cmd+=" -drive media=cdrom,readonly=on,file=${seed_iso}"
+    # Attach the seed as a virtio-blk disk (=> /dev/vdb), NOT a second cdrom:
+    # q35 wires only one IDE/AHCI cdrom reliably, so a second media=cdrom may
+    # silently not appear. virtio-blk always attaches; blkid -L VOIDSEED finds it.
+    cmd+=" -drive if=virtio,format=raw,readonly=on,file=${seed_iso}"
     cmd+=" -netdev user,id=n0 -device virtio-net-pci,netdev=n0"
     cmd+=" -display none -serial stdio -monitor none -no-reboot"
 

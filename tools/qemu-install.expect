@@ -55,25 +55,21 @@ expect {
     timeout { send_user "\n\[qemu-install] TIMEOUT pinning prompt\n"; exit 2 }
 }
 
-# --- Phase 2: locate + mount the seed medium -------------------------------
-# autorun.sh lives on the seed, so we must mount it first. Locate it by label
-# (blkid -L), and dump blkid + the relevant device nodes so a failure here is
-# diagnosable from the serial log instead of a blind "not found".
-send "blkid; ls -l /dev/sr* /dev/vd* 2>/dev/null; S=\$(blkid -L VOIDSEED); echo SEEDDEV=\$S; mkdir -p /mnt/seed; mount -o ro \$S /mnt/seed 2>&1; echo SEED_PROBE_DONE\r"
-expect {
-    -re {SEED_PROBE_DONE}  { }
-    timeout { send_user "\n\[qemu-install] TIMEOUT probing seed\n"; exit 2 }
-}
-
-# --- Phase 3: launch the installer -----------------------------------------
-send "if test -f /mnt/seed/autorun.sh; then bash /mnt/seed/autorun.sh; else echo MISSING_SEED_AUTORUN; fi\r"
+# --- Phase 2: mount the seed and launch the installer ----------------------
+# Do it all in ONE shell command so ordering is guaranteed by the shell, not by
+# expect's prompt matching (matching an intermediate marker races the command
+# echo). Dump blkid + device nodes first for diagnosability. The seed is a
+# virtio-blk disk (blkid -L VOIDSEED -> /dev/vdb). The not-found marker is
+# printf-assembled so the literal can't match its own echoed command line.
+send "S=\$(blkid -L VOIDSEED); echo seeddev:\$S; blkid; ls -l /dev/vd* /dev/sr* 2>/dev/null; mkdir -p /mnt/seed; mount -o ro \$S /mnt/seed; if test -f /mnt/seed/autorun.sh; then bash /mnt/seed/autorun.sh; else printf 'SEED%sABSENT\\n' _; fi\r"
 
 # --- Phase 3: await the result sentinel ------------------------------------
+# These markers appear only in command OUTPUT, never in the echoed command.
 set timeout $total_to
 expect {
     -re {VOID_INSTALL_RESULT: OK}   { send_user "\n\[qemu-install] install OK\n" }
     -re {VOID_INSTALL_RESULT: FAIL} { send_user "\n\[qemu-install] install FAILED\n"; exit 1 }
-    -re {MISSING_SEED_AUTORUN}      { send_user "\n\[qemu-install] seed autorun.sh not found\n"; exit 5 }
+    -re {SEED_ABSENT}               { send_user "\n\[qemu-install] seed autorun.sh not found\n"; exit 5 }
     timeout { send_user "\n\[qemu-install] TIMEOUT during install\n"; exit 3 }
     eof     { send_user "\n\[qemu-install] QEMU exited without a result\n"; exit 4 }
 }

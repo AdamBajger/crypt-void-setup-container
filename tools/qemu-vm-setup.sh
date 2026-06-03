@@ -17,7 +17,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Distros disagree on OVMF filenames. Probe known locations; the env vars
 # still let a caller override.
-_qemu_first_existing() { for f in "$@"; do [[ -f "$f" ]] && { echo "$f"; return; }; done; }
+# Echoes the first existing path, or nothing. Always exits 0 so an empty result
+# doesn't abort a `set -e` caller at source time (the install phase needs no
+# OVMF; run_verify_vm validates the OVMF paths explicitly when it actually runs).
+_qemu_first_existing() { for f in "$@"; do [[ -f "$f" ]] && { echo "$f"; return 0; }; done; return 0; }
 QEMU_OVMF_CODE="${QEMU_OVMF_CODE:-$(_qemu_first_existing \
     /usr/share/OVMF/OVMF_CODE_4M.fd \
     /usr/share/OVMF/OVMF_CODE.fd \
@@ -98,7 +101,7 @@ qemu_extract_live_boot() {
         # Take the first `linux`/`linuxefi` line and drop its first two tokens
         # (the `linux` keyword and the kernel-image path), leaving the cmdline.
         base=$(grep -m1 -E '^[[:space:]]*linux(efi)?[[:space:]]' "${grubcfg}" \
-            | sed -E 's@^[[:space:]]*linux(efi)?[[:space:]]+[^[:space:]]+[[:space:]]+@@')
+            | sed -E 's@^[[:space:]]*linux(efi)?[[:space:]]+[^[:space:]]+[[:space:]]+@@') || base=""
     fi
     if [[ -z "${base}" ]]; then
         _qemu_log "WARNING: could not parse live cmdline from grub config; using a default."

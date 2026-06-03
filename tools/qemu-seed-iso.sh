@@ -145,6 +145,13 @@ for _ in $(seq 1 15); do
     sleep 1
 done
 
+# The minimal Void "base" live ISO does not ship the partitioning/crypto/LVM
+# tools the installer needs (parted, cryptsetup, lvm2, mkfs.*). Pull them into
+# the live environment (writable overlay) before handing off.
+log "Installing installer dependencies into the live environment..."
+xbps-install -Sy parted cryptsetup lvm2 dosfstools e2fsprogs gptfdisk \
+    || log "WARNING: xbps-install of installer deps failed (install may abort)"
+
 log "Running entrypoint.sh against ${VOID_TARGET_DEVICE}..."
 if bash /setup/entrypoint.sh; then
     finish 0

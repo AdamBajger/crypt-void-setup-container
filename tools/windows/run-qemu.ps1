@@ -71,38 +71,17 @@ if (-not $share) {
 }
 Write-Host "SMB share \\$env:COMPUTERNAME\$ShareName  ->  $Repo  (read: $env:USERNAME)"
 
-# --- 2. target disk + matching disk.conf ------------------------------------
+# --- 2. target disk ---------------------------------------------------------
 # The produced image fills the whole target disk (LUKS partition = 100%, root
-# LV = 100%FREE), so the disk size you pick here is the final image size.
+# LV = 100%FREE), so the qemu-img size below IS the final image size. The repo's
+# config/disk.conf is NOT touched — disk_size_mib is unused by the raw backend.
 $totalGiB = $DiskSizeGiB + $ExtraGiB
-$mib      = $totalGiB * 1024
-$efiMib   = 512
-$swapMib  = 2048
-if ($mib -le ($efiMib + $swapMib + 2048)) {
-    throw "DiskSizeGiB ($DiskSizeGiB) is too small: need room for EFI (${efiMib}MiB) + swap (${swapMib}MiB) + a usable root."
+if ($totalGiB -lt 5) {
+    throw "DiskSizeGiB ($DiskSizeGiB) is too small — use at least ~5 GiB (EFI + swap + a usable root)."
 }
 if ($ExtraGiB -gt 0) {
     Write-Warning "ExtraGiB=$ExtraGiB enlarges the FLASHED image to ${totalGiB} GiB — make sure your USB stick is at least that big."
 }
-
-# Keep config/disk.conf in sync so the installer's geometry matches the disk.
-# Preserve any custom EFI/swap sizes already in the file; only set disk_size_mib.
-$diskConf = Join-Path $Repo "config\disk.conf"
-if (Test-Path $diskConf) {
-    $c = Get-Content $diskConf -Raw
-    if ($c -match '(?m)^\s*efi_partition_size_mib\s*=\s*(\d+)')  { $efiMib  = [int]$Matches[1] }
-    if ($c -match '(?m)^\s*swap_size_mib\s*=\s*(\d+)')           { $swapMib = [int]$Matches[1] }
-    if ($c -match '(?m)^\s*disk_size_mib\s*=') {
-        $c = [regex]::Replace($c, '(?m)^\s*disk_size_mib\s*=.*$', "disk_size_mib=$mib")
-    } else {
-        $c = $c.TrimEnd() + "`ndisk_size_mib=$mib`n"
-    }
-    Set-Content -Path $diskConf -Value $c -NoNewline
-} else {
-    Set-Content -Path $diskConf -Value "disk_size_mib=$mib`nefi_partition_size_mib=$efiMib`nswap_size_mib=$swapMib`n"
-}
-Write-Host "config/disk.conf -> disk_size_mib=$mib (EFI ${efiMib}MiB, swap ${swapMib}MiB, root = rest)"
-
 if (Test-Path $Disk) {
     Write-Warning "Target disk $Disk already exists — leaving it as-is. Delete it to resize to ${totalGiB} GiB."
 } else {

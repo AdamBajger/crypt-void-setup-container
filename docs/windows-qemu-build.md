@@ -102,7 +102,7 @@ from `config/*.conf`, same as every other build path.
 
 2. **Paste** (the script already copied the complete command to your clipboard —
    nothing to edit). It mounts the share and runs the installer; install
-   passwords come from `qemu-local.env` on the share. The only credential in the
+   passwords come from `.env` on the share. The only credential in the
    line is your Windows account (so the guest can open the SMB share), which the
    script filled in for you.
 

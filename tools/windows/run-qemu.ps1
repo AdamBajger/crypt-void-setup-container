@@ -73,16 +73,35 @@ if (-not (Test-Path $Disk)) {
     Write-Host "Reusing existing target disk: $Disk"
 }
 
-# --- 3. guest paste-line ----------------------------------------------------
-# One physical line for a clean paste. Replace YOUR_WINDOWS_PASSWORD; optionally
-# change the LUKS/ROOT/USER passwords (defaults shown).
-$guest = "xbps-install -Suy xbps; xbps-install -Sy cifs-utils; modprobe cifs; mkdir -p /mnt/cvs; mount -t cifs //10.0.2.2/$ShareName /mnt/cvs -o ro,vers=3.1.1,username=$env:USERNAME,password=YOUR_WINDOWS_PASSWORD && LUKS_PASSWORD=voidlinux ROOT_PASSWORD=voidlinux USER_PASSWORD=voidlinux bash /mnt/cvs/tools/qemu-run-mounted.sh"
+# --- 3. guest paste-line (fully prepared; nothing to edit in the VM) --------
+# Install passwords (LUKS/ROOT/USER) are read inside the VM from the repo's
+# .env (the same file the Docker path uses), so they are NOT in this line. Only
+# the SMB mount needs a host credential to open the share — prompt once and bake
+# it into the line.
+if (-not (Test-Path (Join-Path $Repo ".env"))) {
+    Write-Warning "No .env found. Copy .env.example to .env and fill LUKS_PASSWORD/ROOT_PASSWORD/USER_PASSWORD, otherwise the install falls back to the default passphrase 'voidlinux'."
+}
 
+$sec  = Read-Host -AsSecureString "Windows password for '$env:USERNAME' (to mount the share inside the VM)"
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+$pw   = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+
+$guest = "xbps-install -Suy xbps; xbps-install -Sy cifs-utils; modprobe cifs; mkdir -p /mnt/cvs; mount -t cifs //10.0.2.2/$ShareName /mnt/cvs -o ro,vers=3.1.1,username=$env:USERNAME,password=$pw && bash /mnt/cvs/tools/qemu-run-mounted.sh"
+
+$copied = $false
+try { Set-Clipboard -Value $guest; $copied = $true } catch {}
 Write-Host ""
-Write-Host "==== In the VM: log in as root / voidlinux, then paste this (edit YOUR_WINDOWS_PASSWORD): ====" -ForegroundColor Cyan
-Write-Host $guest -ForegroundColor Yellow
-Write-Host "===============================================================================================" -ForegroundColor Cyan
-try { Set-Clipboard -Value $guest; Write-Host "(copied to clipboard)" -ForegroundColor DarkGray } catch {}
+Write-Host "==== In the VM: log in as root / voidlinux, then PASTE (already on your clipboard) ====" -ForegroundColor Cyan
+if ($copied) {
+    Write-Host "The complete command is on your clipboard — just paste it. Nothing to edit." -ForegroundColor Green
+    Write-Host "(SMB password hidden here on purpose; it's only in the clipboard line.)" -ForegroundColor DarkGray
+} else {
+    # Clipboard unavailable: print with the password masked, plus how to retrieve it.
+    Write-Host ($guest -replace [regex]::Escape("password=$pw"), "password=<your-windows-password>") -ForegroundColor Yellow
+    Write-Warning "Clipboard unavailable — fill your Windows password where shown."
+}
+Write-Host "=====================================================================================" -ForegroundColor Cyan
 Write-Host ""
 
 # --- 4. launch QEMU (interactive) ------------------------------------------

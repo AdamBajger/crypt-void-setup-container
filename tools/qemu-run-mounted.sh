@@ -42,6 +42,19 @@ cp -f "${M}/config/disk.conf"          /config/disk.conf
 cp -f "${M}/config/system.conf"        /config/system.conf
 cp -f "${M}/config/extra-packages.txt" /config/extra-packages.txt
 
+# Reuse the SAME .env the Docker path uses (LUKS_PASSWORD, ROOT_PASSWORD,
+# USER_PASSWORD, VOID_XBPS_REPOSITORY). It is on the mounted repo, so nothing
+# has to be typed in the VM. System config (disk/system/packages) comes from
+# config/ below, exactly as every other path.
+if [[ -f "${M}/.env" ]]; then
+    log "Loading credentials from ${M}/.env"
+    set -a; . "${M}/.env"; set +a
+    TARGET="${VOID_TARGET_DEVICE:-${TARGET}}"
+    [[ -b "${TARGET}" ]] || die "target ${TARGET} (from .env) is not a block device"
+else
+    log "No .env on the share — falling back to default passwords ('voidlinux')."
+fi
+
 export VOID_DEVICE_BACKEND=raw
 export VOID_TARGET_DEVICE="${TARGET}"
 # The minimal live env has no jq/gpg; binaries are mounted from the (already

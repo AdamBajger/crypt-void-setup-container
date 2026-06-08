@@ -78,21 +78,39 @@ New-SmbShare -Name cvs -Path "C:\path\to\crypt-void-setup-container" -ReadAccess
 
 ---
 
+## Install passwords — set once in `.env`, no typing in the VM
+
+The LUKS/root/user passwords are **not** pasted into the VM. They come from the
+repo's **`.env`** — the *same* file the Docker path uses — which is on the
+share, so `tools/qemu-run-mounted.sh` reads it inside the VM. Copy the template
+once and fill it (it's gitignored):
+
+```sh
+cp .env.example .env      # then edit:
+# LUKS_PASSWORD=...
+# ROOT_PASSWORD=...
+# USER_PASSWORD=...
+```
+
+If `.env` is absent the install falls back to the default passphrase
+`voidlinux`. System config (disk geometry, hostname/locale, package list) comes
+from `config/*.conf`, same as every other build path.
+
 ## Inside the VM
 
 1. At `void-live login:` log in as **`root`** / **`voidlinux`**.
 
-2. Paste this **one line** (the script prints it pre-filled; here edit
-   `YOUR_WINDOWS_PASSWORD`, and `WINUSER` if your account differs). `10.0.2.2`
-   is the host as seen from QEMU's user network.
+2. **Paste** (the script already copied the complete command to your clipboard —
+   nothing to edit). It mounts the share and runs the installer; install
+   passwords come from `qemu-local.env` on the share. The only credential in the
+   line is your Windows account (so the guest can open the SMB share), which the
+   script filled in for you.
 
+   If you're doing it by hand instead, the line is (`10.0.2.2` = the host on
+   QEMU's user network; fill your Windows user/password):
    ```sh
-   xbps-install -Suy xbps; xbps-install -Sy cifs-utils; modprobe cifs; mkdir -p /mnt/cvs; mount -t cifs //10.0.2.2/cvs /mnt/cvs -o ro,vers=3.1.1,username=WINUSER,password=YOUR_WINDOWS_PASSWORD && LUKS_PASSWORD=voidlinux ROOT_PASSWORD=voidlinux USER_PASSWORD=voidlinux bash /mnt/cvs/tools/qemu-run-mounted.sh
+   xbps-install -Suy xbps; xbps-install -Sy cifs-utils; modprobe cifs; mkdir -p /mnt/cvs; mount -t cifs //10.0.2.2/cvs /mnt/cvs -o ro,vers=3.1.1,username=WINUSER,password=WINPASS && bash /mnt/cvs/tools/qemu-run-mounted.sh
    ```
-
-   What it does: self-updates `xbps`, installs the one dependency `cifs-utils`,
-   mounts the shared repo at `/mnt/cvs`, then runs the installer against
-   `/dev/vda`. Change the three passwords to your own if you like.
 
 3. Watch it partition → LUKS → LVM → install base-system → chroot setup. When it
    prints `[run-mounted] ... DONE` (and the installer's final summary), run:

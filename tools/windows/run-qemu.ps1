@@ -143,15 +143,21 @@ Write-Host ""
 
 # --- 4. launch QEMU (interactive) ------------------------------------------
 # whpx = Windows Hypervisor Platform (fast); falls back to tcg (slow) if absent.
+# Boot order is pinned with explicit bootindex (CD first, disk second) rather
+# than `-boot d` — with a blank target disk attached, `-boot d` is honoured
+# inconsistently across firmware/accel and the VM may try the empty disk and
+# report "No bootable device".
 $qemuArgs = @(
     "-accel", "whpx,kernel-irqchip=off", "-accel", "tcg",
     "-m", "$Mem", "-smp", "$Cpus",
-    "-drive", "if=virtio,format=raw,file=$Disk",
-    "-cdrom", "$Iso",
-    "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
-    "-boot", "d"
+    "-drive", "id=cd,if=none,media=cdrom,readonly=on,file=$Iso",
+    "-device", "ide-cd,drive=cd,bootindex=0",
+    "-drive", "id=hd,if=none,format=raw,file=$Disk",
+    "-device", "virtio-blk-pci,drive=hd,bootindex=1",
+    "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0"
 )
 Write-Host "Launching QEMU (close the window or 'poweroff' in the guest when done)..." -ForegroundColor Green
+Write-Host "qemu: `"$qemu`" $($qemuArgs -join ' ')" -ForegroundColor DarkGray
 & $qemu @qemuArgs
 
 Write-Host ""

@@ -75,15 +75,17 @@ New-SmbShare -Name cvs -Path "C:\path\to\crypt-void-setup-container" -ReadAccess
 & "C:\Program Files\qemu\qemu-img.exe" create -f raw void-vm.raw 16G
 ```
 
-**3. Launch QEMU:**
+**3. Launch QEMU** (boot order pinned via `bootindex` — CD first, disk second;
+more reliable than `-boot d` when a blank target disk is attached):
 ```powershell
 & "C:\Program Files\qemu\qemu-system-x86_64.exe" `
   -accel whpx,kernel-irqchip=off -accel tcg `
   -m 4096 -smp 4 `
-  -drive if=virtio,format=raw,file=void-vm.raw `
-  -cdrom C:\path\to\void-live-x86_64-XXXXXXXX.iso `
-  -netdev user,id=n0 -device virtio-net-pci,netdev=n0 `
-  -boot d
+  -drive id=cd,if=none,media=cdrom,readonly=on,file=C:\path\to\void-live-x86_64-XXXXXXXX.iso `
+  -device ide-cd,drive=cd,bootindex=0 `
+  -drive id=hd,if=none,format=raw,file=void-vm.raw `
+  -device virtio-blk-pci,drive=hd,bootindex=1 `
+  -netdev user,id=n0 -device virtio-net-pci,netdev=n0
 ```
 
 ---

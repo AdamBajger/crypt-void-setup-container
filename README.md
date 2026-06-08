@@ -239,6 +239,67 @@ The finished image is `output/void-vm.raw`; the live serial logs land in
 `QEMU_INSTALL_TIMEOUT` (3600s). The image uses the fixed non-secret CI
 credentials noted above.
 
+### Interactive local install (no seed ISO / no expect)
+
+For a hands-on local build — boot the live ISO yourself, then run one command
+inside the VM — use `tools/qemu-run-mounted.sh` instead of the automated
+`qemu-build.sh`. It expects **this repo mounted into the guest** and reuses the
+same `entrypoint.sh`; there is no seed image, no `git clone`, and no binary
+download (the binaries come from the mounted, already-populated `binaries/`).
+
+Two hard requirements for this path:
+
+- Boot a **full `void-live` ISO, not the stripped `-base` one** — `qemu-run-mounted.sh`
+  does not install host tools, so the live image must already ship `parted`,
+  `cryptsetup`, `lvm2`, `dosfstools`, `e2fsprogs`.
+- Populate `binaries/` on the host first (`bash tools/fetch-binaries.sh`).
+
+#### Sharing the repo into the guest — prerequisites
+
+The repo has to reach the guest as a mounted filesystem. How depends on the host:
+
+- **Linux / WSL2 host → 9p (`-virtfs`).** No extra software. Add to the qemu
+  line: `-virtfs local,path=$PWD,mount_tag=cvs,security_model=none,readonly=on`.
+  In the guest: `modprobe 9pnet_virtio; mount -t 9p -o trans=virtio,version=9p2000.L,ro cvs /mnt/cvs`.
+
+- **Native Windows host → SMB/CIFS.** virtiofs and 9p both need a host-side
+  component Windows lacks (`virtiofsd` is not ported; stock Windows QEMU is
+  built without the 9p backend), so use Windows' built-in SMB server. **Required
+  dependency: `cifs-utils` inside the guest** (one `xbps-install`); the kernel
+  `cifs` module ships with the live image.
+
+  Prerequisite steps:
+
+  1. **Host (PowerShell, admin):** share the repo folder —
+     `New-SmbShare -Name cvs -Path "C:\path\to\crypt-void-setup-container" -ReadAccess "$env:USERNAME"`.
+     Windows 11 disables anonymous SMB, so authenticate with a real Windows
+     account below. If the guest mount times out, allow "File and Printer
+     Sharing" through Windows Firewall on the active profile.
+  2. **Launch QEMU** with normal user networking
+     (`-netdev user,id=n0 -device virtio-net-pci,netdev=n0`); the host is then
+     reachable from the guest at `10.0.2.2` (the SLIRP gateway).
+  3. **Guest (root, in the booted live VM):**
+
+     ```sh
+     xbps-install -Suy xbps && xbps-install -Sy cifs-utils   # the one dependency
+     modprobe cifs
+     mkdir -p /mnt/cvs
+     mount -t cifs //10.0.2.2/cvs /mnt/cvs \
+         -o ro,vers=3.1.1,username=WINUSER,password=WINPASS
+     ```
+
+Once the repo is mounted at `/mnt/cvs` by either method, run the install:
+
+```sh
+# override creds/target as needed; defaults: /dev/vda, passphrase "voidlinux"
+LUKS_PASSWORD=... ROOT_PASSWORD=... USER_PASSWORD=... \
+  bash /mnt/cvs/tools/qemu-run-mounted.sh
+```
+
+When it finishes, the VM's disk image (`void-vm.raw`) is the etchable artifact.
+`tools/qemu-run-mounted.sh` is mount-method agnostic — it only needs the repo
+at `/mnt/cvs`, so the same command works whether you mounted via 9p or CIFS.
+
 ## Build/Run notes
 
 - Each install run starts from scratch.

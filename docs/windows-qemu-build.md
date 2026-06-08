@@ -44,8 +44,18 @@ The script:
 - prints **and copies to your clipboard** the exact line to paste in the VM,
 - launches QEMU in an interactive window.
 
-Useful options: `-Disk D:\void.raw`, `-DiskSize 32G`, `-Mem 8192`, `-Cpus 6`,
-`-ShareName cvs`, `-QemuDir "C:\Program Files\qemu"`.
+Pick the image size with **`-DiskSizeGiB`** (default 16) — this is the size of
+the produced image, so it must fit your USB stick; the script creates the disk
+at that size and syncs `config/disk.conf` to match. Example for a 64 GiB image:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\windows\run-qemu.ps1 -Iso C:\path\to\void-live.iso -DiskSizeGiB 64
+```
+
+Other options: `-Disk D:\void.raw`, `-ExtraGiB 0` (slack added to the disk —
+enlarges the flashed image, usually leave 0), `-Mem 8192`, `-Cpus 6`,
+`-ShareName cvs`, `-QemuDir "C:\Program Files\qemu"`. RAM (`-Mem`) is unrelated
+to image size — the VM runs from the ISO in RAM and writes to the target disk.
 
 Then jump to [Inside the VM](#inside-the-vm).
 

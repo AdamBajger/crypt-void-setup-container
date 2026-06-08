@@ -26,13 +26,19 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string]$Iso,
-    [string]$Repo      = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
-    [string]$Disk      = (Join-Path (Get-Location) "void-vm.raw"),
-    [string]$DiskSize  = "16G",
-    [string]$ShareName = "cvs",
-    [int]   $Mem       = 4096,
-    [int]   $Cpus      = 4,
-    [string]$QemuDir   = "C:\Program Files\qemu"
+    [string]$Repo        = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
+    [string]$Disk        = (Join-Path (Get-Location) "void-vm.raw"),
+    # Size of the produced image = the target disk. This IS what you flash, so
+    # it must fit your USB stick. The VM runs from the ISO in RAM (-Mem), not
+    # this disk, so it needs no extra headroom.
+    [int]   $DiskSizeGiB = 16,
+    # Optional slack added to the disk. Default 0 — anything here enlarges the
+    # flashed image. Only raise it if you deliberately want a bigger root fs.
+    [int]   $ExtraGiB    = 0,
+    [string]$ShareName   = "cvs",
+    [int]   $Mem         = 4096,
+    [int]   $Cpus        = 4,
+    [string]$QemuDir     = "C:\Program Files\qemu"
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,12 +71,43 @@ if (-not $share) {
 }
 Write-Host "SMB share \\$env:COMPUTERNAME\$ShareName  ->  $Repo  (read: $env:USERNAME)"
 
-# --- 2. target disk ---------------------------------------------------------
-if (-not (Test-Path $Disk)) {
-    & $qimg create -f raw $Disk $DiskSize | Out-Null
-    Write-Host "Created blank target disk: $Disk ($DiskSize)"
+# --- 2. target disk + matching disk.conf ------------------------------------
+# The produced image fills the whole target disk (LUKS partition = 100%, root
+# LV = 100%FREE), so the disk size you pick here is the final image size.
+$totalGiB = $DiskSizeGiB + $ExtraGiB
+$mib      = $totalGiB * 1024
+$efiMib   = 512
+$swapMib  = 2048
+if ($mib -le ($efiMib + $swapMib + 2048)) {
+    throw "DiskSizeGiB ($DiskSizeGiB) is too small: need room for EFI (${efiMib}MiB) + swap (${swapMib}MiB) + a usable root."
+}
+if ($ExtraGiB -gt 0) {
+    Write-Warning "ExtraGiB=$ExtraGiB enlarges the FLASHED image to ${totalGiB} GiB — make sure your USB stick is at least that big."
+}
+
+# Keep config/disk.conf in sync so the installer's geometry matches the disk.
+# Preserve any custom EFI/swap sizes already in the file; only set disk_size_mib.
+$diskConf = Join-Path $Repo "config\disk.conf"
+if (Test-Path $diskConf) {
+    $c = Get-Content $diskConf -Raw
+    if ($c -match '(?m)^\s*efi_partition_size_mib\s*=\s*(\d+)')  { $efiMib  = [int]$Matches[1] }
+    if ($c -match '(?m)^\s*swap_size_mib\s*=\s*(\d+)')           { $swapMib = [int]$Matches[1] }
+    if ($c -match '(?m)^\s*disk_size_mib\s*=') {
+        $c = [regex]::Replace($c, '(?m)^\s*disk_size_mib\s*=.*$', "disk_size_mib=$mib")
+    } else {
+        $c = $c.TrimEnd() + "`ndisk_size_mib=$mib`n"
+    }
+    Set-Content -Path $diskConf -Value $c -NoNewline
 } else {
-    Write-Host "Reusing existing target disk: $Disk"
+    Set-Content -Path $diskConf -Value "disk_size_mib=$mib`nefi_partition_size_mib=$efiMib`nswap_size_mib=$swapMib`n"
+}
+Write-Host "config/disk.conf -> disk_size_mib=$mib (EFI ${efiMib}MiB, swap ${swapMib}MiB, root = rest)"
+
+if (Test-Path $Disk) {
+    Write-Warning "Target disk $Disk already exists — leaving it as-is. Delete it to resize to ${totalGiB} GiB."
+} else {
+    & $qimg create -f raw $Disk "${totalGiB}G" | Out-Null
+    Write-Host "Created blank target disk: $Disk (${totalGiB} GiB; sparse — grows as written)"
 }
 
 # --- 3. guest paste-line (fully prepared; nothing to edit in the VM) --------

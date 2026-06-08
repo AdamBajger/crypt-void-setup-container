@@ -264,29 +264,10 @@ The repo has to reach the guest as a mounted filesystem. How depends on the host
 
 - **Native Windows host → SMB/CIFS.** virtiofs and 9p both need a host-side
   component Windows lacks (`virtiofsd` is not ported; stock Windows QEMU is
-  built without the 9p backend), so use Windows' built-in SMB server. **Required
-  dependency: `cifs-utils` inside the guest** (one `xbps-install`); the kernel
-  `cifs` module ships with the live image.
-
-  Prerequisite steps:
-
-  1. **Host (PowerShell, admin):** share the repo folder —
-     `New-SmbShare -Name cvs -Path "C:\path\to\crypt-void-setup-container" -ReadAccess "$env:USERNAME"`.
-     Windows 11 disables anonymous SMB, so authenticate with a real Windows
-     account below. If the guest mount times out, allow "File and Printer
-     Sharing" through Windows Firewall on the active profile.
-  2. **Launch QEMU** with normal user networking
-     (`-netdev user,id=n0 -device virtio-net-pci,netdev=n0`); the host is then
-     reachable from the guest at `10.0.2.2` (the SLIRP gateway).
-  3. **Guest (root, in the booted live VM):**
-
-     ```sh
-     xbps-install -Suy xbps && xbps-install -Sy cifs-utils   # the one dependency
-     modprobe cifs
-     mkdir -p /mnt/cvs
-     mount -t cifs //10.0.2.2/cvs /mnt/cvs \
-         -o ro,vers=3.1.1,username=WINUSER,password=WINPASS
-     ```
+  built without the 9p backend), so use Windows' built-in SMB server (the one
+  guest dependency is `cifs-utils`). This is automated by
+  **`tools/windows/run-qemu.ps1`** with a full walkthrough in
+  **[docs/windows-qemu-build.md](docs/windows-qemu-build.md)** — start there.
 
 Once the repo is mounted at `/mnt/cvs` by either method, run the install:
 

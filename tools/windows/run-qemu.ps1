@@ -28,13 +28,10 @@ param(
     [Parameter(Mandatory = $true)] [string]$Iso,
     [string]$Repo        = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
     [string]$Disk        = (Join-Path (Get-Location) "void-vm.raw"),
-    # Size of the produced image = the target disk. This IS what you flash, so
-    # it must fit your USB stick. The VM runs from the ISO in RAM (-Mem), not
-    # this disk, so it needs no extra headroom.
-    [int]   $DiskSizeGiB = 16,
-    # Optional slack added to the disk. Default 0 — anything here enlarges the
-    # flashed image. Only raise it if you deliberately want a bigger root fs.
-    [int]   $ExtraGiB    = 0,
+    # Optional override of the image size, in GiB. If omitted (0), the size is
+    # read from config/disk.conf (disk_size_mib) — that file is the single
+    # source of truth and is never modified by this script.
+    [int]   $DiskSizeGiB = 0,
     [string]$ShareName   = "cvs",
     [int]   $Mem         = 4096,
     [int]   $Cpus        = 4,
@@ -72,21 +69,29 @@ if (-not $share) {
 Write-Host "SMB share \\$env:COMPUTERNAME\$ShareName  ->  $Repo  (read: $env:USERNAME)"
 
 # --- 2. target disk ---------------------------------------------------------
-# The produced image fills the whole target disk (LUKS partition = 100%, root
-# LV = 100%FREE), so the qemu-img size below IS the final image size. The repo's
-# config/disk.conf is NOT touched — disk_size_mib is unused by the raw backend.
-$totalGiB = $DiskSizeGiB + $ExtraGiB
-if ($totalGiB -lt 5) {
-    throw "DiskSizeGiB ($DiskSizeGiB) is too small — use at least ~5 GiB (EFI + swap + a usable root)."
+# Image size = config/disk.conf's disk_size_mib (single source of truth), unless
+# overridden by -DiskSizeGiB. The image fills the whole disk (LUKS = 100%, root
+# = 100%FREE), so the qemu-img size IS the final image size. disk.conf is read,
+# never written.
+$diskConf = Join-Path $Repo "config\disk.conf"
+if ($DiskSizeGiB -gt 0) {
+    $diskMiB = $DiskSizeGiB * 1024
+    Write-Host "Image size: $diskMiB MiB (from -DiskSizeGiB $DiskSizeGiB; config/disk.conf not consulted)"
+} elseif ((Test-Path $diskConf) -and ((Get-Content $diskConf -Raw) -match '(?m)^\s*disk_size_mib\s*=\s*(\d+)')) {
+    $diskMiB = [int]$Matches[1]
+    Write-Host "Image size: $diskMiB MiB (from config/disk.conf disk_size_mib)"
+} else {
+    $diskMiB = 16384
+    Write-Warning "No disk_size_mib in config/disk.conf and no -DiskSizeGiB; defaulting to $diskMiB MiB."
 }
-if ($ExtraGiB -gt 0) {
-    Write-Warning "ExtraGiB=$ExtraGiB enlarges the FLASHED image to ${totalGiB} GiB — make sure your USB stick is at least that big."
+if ($diskMiB -lt 5120) {
+    throw "Image size $diskMiB MiB is too small — need at least ~5120 MiB (EFI + swap + a usable root)."
 }
 if (Test-Path $Disk) {
-    Write-Warning "Target disk $Disk already exists — leaving it as-is. Delete it to resize to ${totalGiB} GiB."
+    Write-Warning "Target disk $Disk already exists — leaving it as-is. Delete it to resize to $diskMiB MiB."
 } else {
-    & $qimg create -f raw $Disk "${totalGiB}G" | Out-Null
-    Write-Host "Created blank target disk: $Disk (${totalGiB} GiB; sparse — grows as written)"
+    & $qimg create -f raw $Disk "${diskMiB}M" | Out-Null
+    Write-Host "Created blank target disk: $Disk ($diskMiB MiB; sparse — grows as written)"
 }
 
 # --- 3. guest paste-line (fully prepared; nothing to edit in the VM) --------

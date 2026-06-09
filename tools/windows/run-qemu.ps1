@@ -28,10 +28,6 @@ param(
     [Parameter(Mandatory = $true)] [string]$Iso,
     [string]$Repo        = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
     [string]$Disk        = (Join-Path (Get-Location) "void-vm.raw"),
-    # Optional override of the image size, in GiB. If omitted (0), the size is
-    # read from config/disk.conf (disk_size_mib) — that file is the single
-    # source of truth and is never modified by this script.
-    [int]   $DiskSizeGiB = 0,
     [string]$ShareName   = "cvs",
     [int]   $Mem         = 4096,
     [int]   $Cpus        = 4,
@@ -69,24 +65,19 @@ if (-not $share) {
 Write-Host "SMB share \\$env:COMPUTERNAME\$ShareName  ->  $Repo  (read: $env:USERNAME)"
 
 # --- 2. target disk ---------------------------------------------------------
-# Image size = config/disk.conf's disk_size_mib (single source of truth), unless
-# overridden by -DiskSizeGiB. The image fills the whole disk (LUKS = 100%, root
-# = 100%FREE), so the qemu-img size IS the final image size. disk.conf is read,
-# never written.
+# config/disk.conf is authoritative: the image size is its disk_size_mib, full
+# stop. The image fills the whole disk (LUKS = 100%, root = 100%FREE), so this
+# IS the final image size. disk.conf is read, never written; no per-run override.
 $diskConf = Join-Path $Repo "config\disk.conf"
-if ($DiskSizeGiB -gt 0) {
-    $diskMiB = $DiskSizeGiB * 1024
-    Write-Host "Image size: $diskMiB MiB (from -DiskSizeGiB $DiskSizeGiB; config/disk.conf not consulted)"
-} elseif ((Test-Path $diskConf) -and ((Get-Content $diskConf -Raw) -match '(?m)^\s*disk_size_mib\s*=\s*(\d+)')) {
-    $diskMiB = [int]$Matches[1]
-    Write-Host "Image size: $diskMiB MiB (from config/disk.conf disk_size_mib)"
-} else {
-    $diskMiB = 16384
-    Write-Warning "No disk_size_mib in config/disk.conf and no -DiskSizeGiB; defaulting to $diskMiB MiB."
+if (-not (Test-Path $diskConf)) { throw "config/disk.conf not found at $diskConf" }
+if ((Get-Content $diskConf -Raw) -notmatch '(?m)^\s*disk_size_mib\s*=\s*(\d+)') {
+    throw "disk_size_mib is not set in config/disk.conf"
 }
+$diskMiB = [int]$Matches[1]
 if ($diskMiB -lt 5120) {
-    throw "Image size $diskMiB MiB is too small — need at least ~5120 MiB (EFI + swap + a usable root)."
+    throw "disk_size_mib ($diskMiB) is too small — need at least ~5120 MiB (EFI + swap + a usable root)."
 }
+Write-Host "Image size: $diskMiB MiB (config/disk.conf disk_size_mib)"
 if (Test-Path $Disk) {
     Write-Warning "Target disk $Disk already exists — leaving it as-is. Delete it to resize to $diskMiB MiB."
 } else {

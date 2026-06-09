@@ -44,21 +44,20 @@ The script:
 - prints **and copies to your clipboard** the exact line to paste in the VM,
 - launches QEMU in an interactive window.
 
-**Image size comes from `config/disk.conf`** (`disk_size_mib`) — the single
-source of truth, the same file every build path reads. The script reads it and
-creates the target disk to match; it never modifies it. The image fills the
-whole disk (root = `100%FREE`), so this value is the final image size and must
-fit your USB stick. For a ~64 GiB image, set in `config/disk.conf`:
+**Image size is set by `config/disk.conf` (`disk_size_mib`) — authoritative, no
+per-run override.** It's the same file every build path reads. The script reads
+it and creates the target disk to match (it never modifies it). The image fills
+the whole disk (root = `100%FREE`), so this value is the final image size and
+must fit your USB stick. For a ~64 GiB image, set in `config/disk.conf`:
 
 ```
 disk_size_mib=65536
 ```
 
-To override per-run without editing the file, pass `-DiskSizeGiB 64`.
-
 Other options: `-Disk D:\void.raw`, `-Mem 8192`, `-Cpus 6`, `-ShareName cvs`,
-`-QemuDir "C:\Program Files\qemu"`. RAM (`-Mem`) is unrelated to image size —
-the VM runs from the ISO in RAM and writes to the separate target disk.
+`-QemuDir "C:\Program Files\qemu"`. RAM (`-Mem`) and CPUs (`-Cpus`) are VM
+resources, fully decoupled from the image size — the VM runs from the ISO in
+RAM and writes to the separate target disk.
 
 Then jump to [Inside the VM](#inside-the-vm).
 

@@ -1,32 +1,37 @@
 # Build the image locally on Windows + QEMU
 
-A hands-on local build: boot the Void live ISO in QEMU, log in, paste **one**
-command. The repo is shared into the VM over SMB (no seed ISO, no `git clone`,
-no binary download in the guest), and the in-VM install reuses the same
-`tools/qemu-run-mounted.sh` → `scripts/entrypoint.sh` as every other path.
+Boot the Void live ISO in QEMU, log in, run **one** line. This repo is exposed
+to the VM as a read-only disk via QEMU's **vvfat** (a host folder shown as a
+FAT disk) — so there's **no SMB, no `cifs-utils`, no credentials, and no image
+to build**. The in-VM `build.sh` reads `.env` + `config/` from the mounted repo
+and runs the same `entrypoint.sh` as every other path.
 
-> Linux users: don't use this — run `bash tools/qemu-build.sh` (fully
-> automated, see the README). This page is the **Windows-only** manual path.
+> Linux users: use `bash tools/qemu-build.sh` (fully automated, see the README).
+> This page is the **Windows** path.
 
 ---
 
 ## Prerequisites (host)
 
-1. **QEMU for Windows** (includes `qemu-system-x86_64.exe` and `qemu-img.exe`),
-   default install dir `C:\Program Files\qemu`. https://qemu.weilnetz.de/w64/
-2. **Hardware acceleration** (optional but ~10× faster): enable *Windows
-   Hypervisor Platform* in "Turn Windows features on or off", and virtualization
-   in BIOS. Without it the VM still runs via TCG, just slowly.
-3. **A full `void-live` x86_64 ISO — NOT the `-base` flavor.** The `-base` image
-   is stripped of `parted`/`cryptsetup`/`lvm2` and the build will fail at
-   partitioning. Get a normal live image from https://voidlinux.org/download/.
-4. **This repo, with `binaries/` populated.** The installer unpacks Firefox /
-   VS Code from `binaries/`. Populate once (WSL or Git-Bash):
+1. **QEMU for Windows** (`qemu-system-x86_64.exe` + `qemu-img.exe`), default
+   `C:\Program Files\qemu`. https://qemu.weilnetz.de/w64/
+2. **Hardware acceleration** (optional, ~10× faster): enable *Windows Hypervisor
+   Platform* in "Turn Windows features on or off" + virtualization in BIOS.
+   Without it QEMU falls back to TCG (slow).
+3. **A Void live x86_64 ISO** from https://voidlinux.org/download/. Either the
+   full or the `-base` flavor works — `build.sh` installs the partitioning tools.
+4. **`binaries/` populated** (the installer unpacks Firefox / VS Code from it):
    ```sh
-   bash tools/fetch-binaries.sh
+   bash tools/fetch-binaries.sh      # run once in WSL or Git-Bash
    ```
-5. Your **Windows account username + password** (Windows 11 disables anonymous
-   SMB, so the guest authenticates as you).
+5. **`.env`** with your passwords (optional — defaults to passphrase `voidlinux`):
+   ```sh
+   cp .env.example .env              # then edit LUKS_PASSWORD / ROOT_PASSWORD / USER_PASSWORD
+   ```
+
+Image size is taken from **`config/disk.conf`** (`disk_size_mib`) — authoritative,
+no flag. For a ~64 GiB image set `disk_size_mib=65536`. The image fills the whole
+disk, so this value is the final image size and must fit your USB stick.
 
 ---
 
@@ -38,114 +43,59 @@ From the repo root in PowerShell:
 powershell -ExecutionPolicy Bypass -File tools\windows\run-qemu.ps1 -Iso C:\path\to\void-live-x86_64-XXXXXXXX.iso
 ```
 
-The script:
-- creates an SMB share `cvs` of this repo,
-- creates a blank `void-vm.raw` (16 GiB) target disk,
-- prints **and copies to your clipboard** the exact line to paste in the VM,
-- launches QEMU in an interactive window.
-
-**Image size is set by `config/disk.conf` (`disk_size_mib`) — authoritative, no
-per-run override.** It's the same file every build path reads. The script reads
-it and creates the target disk to match (it never modifies it). The image fills
-the whole disk (root = `100%FREE`), so this value is the final image size and
-must fit your USB stick. For a ~64 GiB image, set in `config/disk.conf`:
-
-```
-disk_size_mib=65536
-```
-
-Other options: `-Disk D:\void.raw`, `-Mem 8192`, `-Cpus 6`, `-ShareName cvs`,
-`-QemuDir "C:\Program Files\qemu"`. RAM (`-Mem`) and CPUs (`-Cpus`) are VM
-resources, fully decoupled from the image size — the VM runs from the ISO in
-RAM and writes to the separate target disk.
-
-Then jump to [Inside the VM](#inside-the-vm).
+It reads `config/disk.conf`, creates `void-vm.raw` at that size, attaches the
+repo as a vvfat disk, copies the one in-VM command to your clipboard, and
+launches QEMU. Options: `-Disk D:\void.raw`, `-Mem 8192`, `-Cpus 6`,
+`-QemuDir "C:\Program Files\qemu"`.
 
 ---
 
-## Manual path (equivalent to what the script does)
+## Manual path (equivalent)
 
-Run these in PowerShell **as Administrator** (for `New-SmbShare`). Edit paths.
-
-**1. Share the repo over SMB:**
 ```powershell
-New-SmbShare -Name cvs -Path "C:\path\to\crypt-void-setup-container" -ReadAccess "$env:USERNAME"
-```
+# 1. blank target disk at the size from config/disk.conf (example: 64000 MiB)
+& "C:\Program Files\qemu\qemu-img.exe" create -f raw void-vm.raw 64000M
 
-**2. Create the blank target disk:**
-```powershell
-& "C:\Program Files\qemu\qemu-img.exe" create -f raw void-vm.raw 16G
-```
-
-**3. Launch QEMU** (boot order pinned via `bootindex` — CD first, disk second;
-more reliable than `-boot d` when a blank target disk is attached):
-```powershell
+# 2. launch from the REPO ROOT (cwd matters: vvfat uses 'fat:32:.' = this folder)
+cd C:\path\to\crypt-void-setup-container
 & "C:\Program Files\qemu\qemu-system-x86_64.exe" `
-  -accel whpx,kernel-irqchip=off -accel tcg `
-  -m 4096 -smp 4 `
-  -drive id=cd,if=none,media=cdrom,readonly=on,file=C:\path\to\void-live-x86_64-XXXXXXXX.iso `
+  -accel whpx,kernel-irqchip=off -accel tcg -m 4096 -smp 4 `
+  -drive id=cd,if=none,media=cdrom,readonly=on,file=C:\path\to\void-live.iso `
   -device ide-cd,drive=cd,bootindex=0 `
-  -drive id=hd,if=none,format=raw,file=void-vm.raw `
+  -drive id=hd,if=none,format=raw,file=C:\path\to\void-vm.raw `
   -device virtio-blk-pci,drive=hd,bootindex=1 `
+  -drive id=repo,if=none,readonly=on,file=fat:32:. `
+  -device virtio-blk-pci,drive=repo `
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0
 ```
 
 ---
 
-## Install passwords — set once in `.env`, no typing in the VM
-
-The LUKS/root/user passwords are **not** pasted into the VM. They come from the
-repo's **`.env`** — the *same* file the Docker path uses — which is on the
-share, so `tools/qemu-run-mounted.sh` reads it inside the VM. Copy the template
-once and fill it (it's gitignored):
-
-```sh
-cp .env.example .env      # then edit:
-# LUKS_PASSWORD=...
-# ROOT_PASSWORD=...
-# USER_PASSWORD=...
-```
-
-If `.env` is absent the install falls back to the default passphrase
-`voidlinux`. System config (disk geometry, hostname/locale, package list) comes
-from `config/*.conf`, same as every other build path.
-
 ## Inside the VM
 
 1. At `void-live login:` log in as **`root`** / **`voidlinux`**.
-
-2. **Paste** (the script already copied the complete command to your clipboard —
-   nothing to edit). It mounts the share and runs the installer; install
-   passwords come from `.env` on the share. The only credential in the
-   line is your Windows account (so the guest can open the SMB share), which the
-   script filled in for you.
-
-   If you're doing it by hand instead, the line is (`10.0.2.2` = the host on
-   QEMU's user network; fill your Windows user/password):
+2. Run the one line (the script copied it to your clipboard):
    ```sh
-   xbps-install -Suy xbps; xbps-install -Sy cifs-utils; modprobe cifs; mkdir -p /mnt/cvs; mount -t cifs //10.0.2.2/cvs /mnt/cvs -o ro,vers=3.1.1,username=WINUSER,password=WINPASS && bash /mnt/cvs/tools/qemu-run-mounted.sh
+   mount /dev/vdb /mnt && bash /mnt/build.sh
    ```
-
-3. Watch it partition → LUKS → LVM → install base-system → chroot setup. When it
-   prints `[run-mounted] ... DONE` (and the installer's final summary), run:
-   ```sh
-   poweroff
-   ```
+   `/dev/vdb` is the repo (vvfat). `build.sh` self-updates xbps, installs the
+   installer tools, reads `.env` + `config/` from `/mnt`, and installs to
+   `/dev/vda`. Nothing else to type.
+3. When it prints the final summary, run `poweroff`.
 
 ---
 
 ## Get the image onto a USB stick
 
-After poweroff, the host file `void-vm.raw` **is** the full-disk-encrypted,
-EFI-bootable image. Write it to a stick (≥ the disk size you chose):
+After poweroff, `void-vm.raw` is the full-disk-encrypted, EFI-bootable image.
+Write it to a stick (≥ the `disk_size_mib` you chose):
 
-- **Rufus**: pick `void-vm.raw` directly (DD-image mode).
+- **Rufus**: select `void-vm.raw` (DD-image mode).
 - **WSL / dd**: `sudo dd if=void-vm.raw of=/dev/sdX bs=4M status=progress conv=fsync`
   (verify `/dev/sdX` first — wrong device destroys data).
 
-At boot you'll be asked for the LUKS passphrase (what you set as
-`LUKS_PASSWORD`, default `voidlinux`). Change it (`cryptsetup luksChangeKey`)
-before any real use.
+At boot you're asked for the LUKS passphrase (your `.env` value, default
+`voidlinux`). Change it (`cryptsetup luksChangeKey`) before real use.
 
 ---
 
@@ -153,12 +103,12 @@ before any real use.
 
 | Symptom | Fix |
 |---|---|
-| Guest `mount -t cifs` hangs/times out | Allow **File and Printer Sharing** through Windows Firewall on the active network profile. |
-| `mount error(13): Permission denied` | Wrong Windows username/password, or Win11 blocking the account — use your real account creds; ensure the account has a password. |
-| `parted: command not found` mid-install | You booted the **`-base`** ISO. Use a full `void-live` image. |
+| `mount: /dev/vdb: ... not found` / wrong disk | The repo is the 2nd virtio disk. If devices enumerate oddly, check `lsblk` — the repo is the small FAT disk, the target is the big empty one. |
+| `No bootable device` when the VM starts | Boot order — already pinned via `bootindex` in the script; if doing it manually, keep `bootindex=0` on the CD. |
 | Firefox/VS Code step fails (`VERSION` missing) | `binaries/` wasn't populated — run `bash tools/fetch-binaries.sh` on the host first. |
+| vvfat errors / repo not readable | Make sure QEMU's working dir is the repo root (the script does this with `Push-Location`; manually, `cd` into the repo before launching so `fat:32:.` resolves). |
 | Very slow install | WHPX not active (TCG fallback). Enable Windows Hypervisor Platform + BIOS virtualization. |
 | `-accel whpx ... not available` | Harmless — QEMU falls through to `-accel tcg`. |
 
-> The image bakes in whatever passwords you passed (defaults are non-secret
-> `voidlinux`). It's fine for trying; rotate them for real use.
+> The image bakes in your `.env` passwords (defaults are non-secret `voidlinux`).
+> Fine for trying; rotate them for real use.

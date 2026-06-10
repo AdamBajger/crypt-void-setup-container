@@ -242,44 +242,37 @@ credentials noted above.
 ### Interactive local install (no seed ISO / no expect)
 
 For a hands-on local build — boot the live ISO yourself, then run one command
-inside the VM — use `tools/qemu-run-mounted.sh` instead of the automated
-`qemu-build.sh`. It expects **this repo mounted into the guest** and reuses the
-same `entrypoint.sh`; there is no seed image, no `git clone`, and no binary
-download (the binaries come from the mounted, already-populated `binaries/`).
+inside the VM — use `build.sh` instead of the automated `qemu-build.sh`. It
+expects **this repo mounted into the guest** and reuses the same
+`entrypoint.sh`; there is no seed image, no `git clone`, and no binary download
+(the binaries come from the mounted, already-populated `binaries/`).
 
-Two hard requirements for this path:
+One requirement: **populate `binaries/` on the host first**
+(`bash tools/fetch-binaries.sh`). Any Void live ISO works — `build.sh` installs
+the partitioning tools (`parted`, `cryptsetup`, `lvm2`, …) itself, so the
+stripped `-base` flavor is fine.
 
-- Boot a **full `void-live` ISO, not the stripped `-base` one** — `qemu-run-mounted.sh`
-  does not install host tools, so the live image must already ship `parted`,
-  `cryptsetup`, `lvm2`, `dosfstools`, `e2fsprogs`.
-- Populate `binaries/` on the host first (`bash tools/fetch-binaries.sh`).
+#### Getting the repo into the guest
 
-#### Sharing the repo into the guest — prerequisites
+The repo reaches the guest as a mounted filesystem — no copy, no clone:
 
-The repo has to reach the guest as a mounted filesystem. How depends on the host:
+- **Windows host → QEMU vvfat.** The repo folder is shown to the VM as a
+  read-only FAT disk (`/dev/vdb`); no SMB, no `cifs-utils`, no credentials, no
+  image build. Automated by **`tools/windows/run-qemu.ps1`**, full walkthrough
+  in **[docs/windows-qemu-build.md](docs/windows-qemu-build.md)**. In the VM you
+  log in and run one line:
+  ```sh
+  mount /dev/vdb /mnt && bash /mnt/build.sh
+  ```
 
-- **Linux / WSL2 host → 9p (`-virtfs`).** No extra software. Add to the qemu
-  line: `-virtfs local,path=$PWD,mount_tag=cvs,security_model=none,readonly=on`.
-  In the guest: `modprobe 9pnet_virtio; mount -t 9p -o trans=virtio,version=9p2000.L,ro cvs /mnt/cvs`.
+- **Linux / WSL2 host → 9p (`-virtfs`).** Add to the qemu line:
+  `-virtfs local,path=$PWD,mount_tag=cvs,security_model=none,readonly=on`; in the
+  guest: `modprobe 9pnet_virtio; mount -t 9p -o trans=virtio,version=9p2000.L,ro cvs /mnt && bash /mnt/build.sh`.
 
-- **Native Windows host → SMB/CIFS.** virtiofs and 9p both need a host-side
-  component Windows lacks (`virtiofsd` is not ported; stock Windows QEMU is
-  built without the 9p backend), so use Windows' built-in SMB server (the one
-  guest dependency is `cifs-utils`). This is automated by
-  **`tools/windows/run-qemu.ps1`** with a full walkthrough in
-  **[docs/windows-qemu-build.md](docs/windows-qemu-build.md)** — start there.
-
-Once the repo is mounted at `/mnt/cvs` by either method, run the install:
-
-```sh
-# override creds/target as needed; defaults: /dev/vda, passphrase "voidlinux"
-LUKS_PASSWORD=... ROOT_PASSWORD=... USER_PASSWORD=... \
-  bash /mnt/cvs/tools/qemu-run-mounted.sh
-```
-
-When it finishes, the VM's disk image (`void-vm.raw`) is the etchable artifact.
-`tools/qemu-run-mounted.sh` is mount-method agnostic — it only needs the repo
-at `/mnt/cvs`, so the same command works whether you mounted via 9p or CIFS.
+`build.sh` installs the installer tools, reads `.env` + `config/` from the
+mounted repo, and runs the install against `/dev/vda`. When it finishes, the
+target disk (`void-vm.raw`) is the etchable image. (`build.sh` wraps
+`tools/qemu-run-mounted.sh`, which is mount-method agnostic.)
 
 ## Build/Run notes
 

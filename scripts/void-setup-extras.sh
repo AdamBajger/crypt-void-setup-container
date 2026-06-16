@@ -101,9 +101,13 @@ EOF
 # ---------------------------------------------------------------------------
 # User groups
 # ---------------------------------------------------------------------------
-log "Adding ${VOID_USERNAME} to audio, video, network, docker groups..."
+log "Adding ${VOID_USERNAME} to audio, video, network groups..."
 usermod -a -G audio,video,network "${VOID_USERNAME}"
-usermod -a -G docker "${VOID_USERNAME}"
+# Only if docker is installed -- the package (and its group) may be trimmed out
+# of extra-packages.txt; usermod against a missing group is fatal under set -e.
+if getent group docker >/dev/null 2>&1; then
+    usermod -a -G docker "${VOID_USERNAME}"
+fi
 
 # ---------------------------------------------------------------------------
 # NetworkManager: drop conflicting services, enable dbus
@@ -168,7 +172,8 @@ ln -sf /etc/sv/NetworkManager "${RUNSVDIR}/NetworkManager"
 ln -sf /etc/sv/tlp            "${RUNSVDIR}/tlp"
 ln -sf /etc/sv/tlp-pd         "${RUNSVDIR}/tlp-pd"
 ln -sf /etc/sv/bluetoothd     "${RUNSVDIR}/bluetoothd"
-ln -sf /etc/sv/docker         "${RUNSVDIR}/docker"
+# docker may be trimmed; only wire its service if the package provided it.
+[ -d /etc/sv/docker ] && ln -sf /etc/sv/docker "${RUNSVDIR}/docker"
 
 # ---------------------------------------------------------------------------
 # First-boot service: completes Flatpak install on real hardware where

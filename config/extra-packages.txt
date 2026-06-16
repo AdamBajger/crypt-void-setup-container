@@ -60,18 +60,23 @@ fping
 
 # Archive tools
 ark
+# xz: required -- void-setup-extras unpacks Firefox from a .tar.xz (tar -xJf).
+# Was only present transitively via the now-trimmed apps, so list it explicitly.
+xz
 
 # Text editors
 vim
 kate
 
 # Development tools
-gcc
+# [trimmed-for-16gb-stick] re-enable when targeting a >=32 GB device
+#gcc
 python3-setuptools
-uv
+#uv
 
 # Input device managers
-Solaar
+# [trimmed-for-16gb-stick]
+#Solaar
 
 # System administration tools
 htop
@@ -83,15 +88,17 @@ libparted
 gvfs
 
 # Container, virtualization, and Kubernetes tools
-docker
-docker-buildx
-docker-compose
-qemu
-kubectl
-helm
+# [trimmed-for-16gb-stick] re-enable when targeting a >=32 GB device
+#docker
+#docker-buildx
+#docker-compose
+#qemu
+#kubectl
+#helm
 
 # Networking & VPN tools
-eduvpn-client
+# [trimmed-for-16gb-stick]
+#eduvpn-client
 nm-tray
 
 # Firewall management
@@ -105,12 +112,14 @@ grub-x86_64-efi
 chrony
 
 # Media & office applications
-libreoffice
-vlc
+# [trimmed-for-16gb-stick] re-enable when targeting a >=32 GB device
+#libreoffice
+#vlc
 
 # System utilities
 pigz
-postgresql-client
+# [trimmed-for-16gb-stick]
+#postgresql-client
 rtkit
 void-docs-browse
 xmirror

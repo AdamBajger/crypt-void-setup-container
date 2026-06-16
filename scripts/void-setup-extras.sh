@@ -19,12 +19,20 @@ log() { echo "[void-setup-extras] $*"; }
 EXTRA_PACKAGES_FILE="/tmp/extra-packages.txt"
 log "Reading extra packages from ${EXTRA_PACKAGES_FILE}..."
 # Strip whole-line comments and blank lines; keep package tokens on a single line.
-EXTRA_PACKAGES=$(grep -vE '^\s*(#|$)' "${EXTRA_PACKAGES_FILE}" | tr '\n' ' ')
+# `tr -d '\r'` is essential: a Windows checkout (core.autocrlf) leaves CRLF in
+# this file, so without it every token keeps a trailing CR and xbps reports the
+# first one as "Package 'bash' not found in repository pool".
+EXTRA_PACKAGES=$(grep -vE '^\s*(#|$)' "${EXTRA_PACKAGES_FILE}" | tr -d '\r' | tr '\n' ' ')
 
 if [[ -n "${EXTRA_PACKAGES// }" ]]; then
   log "Installing xbps packages: ${EXTRA_PACKAGES}"
+  # Pin the arch + the verified mirror, exactly as install-core.sh and
+  # void-setup-minimal.sh do, so extras uses the same known-good repository as
+  # the base install rather than the chroot's default mirror.
   # shellcheck disable=SC2086
-  xbps-install -y -S ${EXTRA_PACKAGES}
+  XBPS_ARCH="${VOID_TARGET_ARCH}" xbps-install -y -S \
+    --repository="${VOID_XBPS_REPOSITORY}" \
+    ${EXTRA_PACKAGES}
 else
   log "No extra packages listed; skipping xbps install."
 fi

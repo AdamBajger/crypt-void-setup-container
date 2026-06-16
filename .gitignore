@@ -3,3 +3,8 @@ output/
 logs/
 binaries/*
 !binaries/.gitkeep
+# Build artifacts and downloaded media (never commit -- multi-GB)
+*.raw
+*.img
+*.iso
+*.bak

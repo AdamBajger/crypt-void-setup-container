@@ -256,14 +256,20 @@ stripped `-base` flavor is fine.
 
 The repo reaches the guest as a mounted filesystem — no copy, no clone:
 
-- **Windows host → QEMU vvfat.** The repo folder is shown to the VM as a
-  read-only FAT disk (`/dev/vdb`); no SMB, no `cifs-utils`, no credentials, no
-  image build. Automated by **`tools/windows/run-qemu.ps1`**, full walkthrough
-  in **[docs/windows-qemu-build.md](docs/windows-qemu-build.md)**. In the VM you
-  log in and run one line:
-  ```sh
-  mount /dev/vdb /mnt && bash /mnt/build.sh
+- **Windows host → QEMU vvfat.** A filtered, staged copy of the repo (vvfat
+  tops out at ~504 MiB and refuses >2 GiB files, so `.git`, `output/` and
+  ISO/raw images are excluded) is shown to the VM as a read-only FAT16 disk
+  (`/dev/vdb1`); no SMB, no `cifs-utils`, no credentials, no image build.
+  Run **one** command — it boots headless, logs in over a serial console, and
+  runs the in-VM build with **no QEMU window and no typing inside the VM**:
+  ```powershell
+  pwsh -File tools\windows\run-qemu.ps1
   ```
+  Full walkthrough (modes `probe`/`interactive`, `-VerifyBoot`) in
+  **[docs/windows-qemu-build.md](docs/windows-qemu-build.md)**. The driver runs
+  the same one line you'd type by hand: `mount /dev/vdb1 /repo && bash
+  /repo/build.sh` (`/repo`, not `/mnt` — the installer mounts the target at
+  `/mnt/void-install`).
 
 - **Linux / WSL2 host → 9p (`-virtfs`).** Add to the qemu line:
   `-virtfs local,path=$PWD,mount_tag=cvs,security_model=none,readonly=on`; in the

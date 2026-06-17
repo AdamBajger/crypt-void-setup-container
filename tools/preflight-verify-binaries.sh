@@ -83,6 +83,15 @@ SIDECAR_SHA=$(awk '{print $1; exit}' "${VSC_DIR}/SHA256")
 # ---------------------------------------------------------------------------
 # Void Linux live ISO
 # ---------------------------------------------------------------------------
+# The QEMU install runs this preflight a second time *inside* the live VM,
+# where the ISO is intentionally absent from the seed (it is the boot medium,
+# already verified on the host). Honour PREFLIGHT_SKIP_ISO to skip it there.
+if [[ -n "${PREFLIGHT_SKIP_ISO:-}" ]]; then
+    log "PREFLIGHT_SKIP_ISO set — skipping Void live ISO verification."
+    log "Verification complete."
+    exit 0
+fi
+
 log "Verifying Void Linux live ISO checksum..."
 ISO_FILE=$(jq -r '.void_iso.file'   "${MANIFEST}")
 ISO_SHA=$(jq  -r '.void_iso.sha256' "${MANIFEST}")

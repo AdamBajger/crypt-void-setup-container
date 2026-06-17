@@ -19,12 +19,20 @@ log() { echo "[void-setup-extras] $*"; }
 EXTRA_PACKAGES_FILE="/tmp/extra-packages.txt"
 log "Reading extra packages from ${EXTRA_PACKAGES_FILE}..."
 # Strip whole-line comments and blank lines; keep package tokens on a single line.
-EXTRA_PACKAGES=$(grep -vE '^\s*(#|$)' "${EXTRA_PACKAGES_FILE}" | tr '\n' ' ')
+# `tr -d '\r'` is essential: a Windows checkout (core.autocrlf) leaves CRLF in
+# this file, so without it every token keeps a trailing CR and xbps reports the
+# first one as "Package 'bash' not found in repository pool".
+EXTRA_PACKAGES=$(grep -vE '^\s*(#|$)' "${EXTRA_PACKAGES_FILE}" | tr -d '\r' | tr '\n' ' ')
 
 if [[ -n "${EXTRA_PACKAGES// }" ]]; then
   log "Installing xbps packages: ${EXTRA_PACKAGES}"
+  # Pin the arch + the verified mirror, exactly as install-core.sh and
+  # void-setup-minimal.sh do, so extras uses the same known-good repository as
+  # the base install rather than the chroot's default mirror.
   # shellcheck disable=SC2086
-  xbps-install -y -S ${EXTRA_PACKAGES}
+  XBPS_ARCH="${VOID_TARGET_ARCH}" xbps-install -y -S \
+    --repository="${VOID_XBPS_REPOSITORY}" \
+    ${EXTRA_PACKAGES}
 else
   log "No extra packages listed; skipping xbps install."
 fi
@@ -93,9 +101,13 @@ EOF
 # ---------------------------------------------------------------------------
 # User groups
 # ---------------------------------------------------------------------------
-log "Adding ${VOID_USERNAME} to audio, video, network, docker groups..."
+log "Adding ${VOID_USERNAME} to audio, video, network groups..."
 usermod -a -G audio,video,network "${VOID_USERNAME}"
-usermod -a -G docker "${VOID_USERNAME}"
+# Only if docker is installed -- the package (and its group) may be trimmed out
+# of extra-packages.txt; usermod against a missing group is fatal under set -e.
+if getent group docker >/dev/null 2>&1; then
+    usermod -a -G docker "${VOID_USERNAME}"
+fi
 
 # ---------------------------------------------------------------------------
 # NetworkManager: drop conflicting services, enable dbus
@@ -160,7 +172,8 @@ ln -sf /etc/sv/NetworkManager "${RUNSVDIR}/NetworkManager"
 ln -sf /etc/sv/tlp            "${RUNSVDIR}/tlp"
 ln -sf /etc/sv/tlp-pd         "${RUNSVDIR}/tlp-pd"
 ln -sf /etc/sv/bluetoothd     "${RUNSVDIR}/bluetoothd"
-ln -sf /etc/sv/docker         "${RUNSVDIR}/docker"
+# docker may be trimmed; only wire its service if the package provided it.
+[ -d /etc/sv/docker ] && ln -sf /etc/sv/docker "${RUNSVDIR}/docker"
 
 # ---------------------------------------------------------------------------
 # First-boot service: completes Flatpak install on real hardware where

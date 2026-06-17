@@ -1,0 +1,80 @@
+#!/usr/bin/expect -f
+# qemu-install.expect — boot the Void live VM, log in over the serial console,
+# launch the seed autorun.sh, and decide the outcome from its sentinel.
+#
+# Driven entirely by environment variables:
+#   QX_QEMU           full qemu-system-x86_64 command (serial on stdio)
+#   QX_LOGFILE        file to mirror the full serial session into
+#   QX_TIMEOUT        seconds to allow for the whole install
+#   QX_LOGIN_TIMEOUT  seconds to allow for reaching a shell (default 600)
+
+set qemu     $env(QX_QEMU)
+set logfile  $env(QX_LOGFILE)
+set total_to $env(QX_TIMEOUT)
+set login_to [expr {[info exists env(QX_LOGIN_TIMEOUT)] ? $env(QX_LOGIN_TIMEOUT) : 600}]
+
+log_file -a $logfile
+log_user 1
+
+eval spawn $qemu
+
+# --- Phase 1: log in and confirm a shell -----------------------------------
+# The serial getty (console=ttyS0) shows a normal login prompt; live.autologin
+# only affects tty1. agetty's login program times out 60s after the username,
+# and the live MOTD reprints on every cycle, so a sloppy multi-pattern loop
+# desyncs (the banner even contains "# void-installer" and "login: timed out").
+#
+# Drive it strictly: per attempt, wait for login: -> send root, wait for
+# password: -> send voidlinux, then prove we actually reached a shell by the
+# OUTPUT of an arithmetic echo. The value 42 appears only in the command's
+# output, never in the echoed command text, so it can't false-match the banner
+# or the echoed line.
+# Match on bare substrings (no "$" end-anchor): the prompts can carry trailing
+# bytes that defeat anchoring, and login's program times out 60s after the
+# username, so we must answer the password promptly. React to login:/password:
+# and prove a shell by the OUTPUT of an arithmetic echo (the literal 42 appears
+# only in the command's output, never in the echoed command or the MOTD banner).
+set timeout 120
+set ready 0
+for {set attempt 0} {$attempt < 12 && !$ready} {incr attempt} {
+    expect {
+        -re {VOIDMARK=42=END} { set ready 1 }
+        -re {assword:}        { send "voidlinux\recho VOIDMARK=\$((21*2))=END\r"; exp_continue }
+        -re {ogin:}           { send "root\r"; exp_continue }
+        timeout               { send "\recho VOIDMARK=\$((21*2))=END\r" }
+        eof                   { send_user "\n\[qemu-install] QEMU exited before shell\n"; exit 4 }
+    }
+}
+if {!$ready} { send_user "\n\[qemu-install] FAILED to log in / reach a shell\n"; exit 2 }
+
+# Pin a deterministic prompt for the remaining steps.
+send "export PS1='QXREADY# '\r"
+set timeout 30
+expect {
+    -re {QXREADY# $} { }
+    timeout { send_user "\n\[qemu-install] TIMEOUT pinning prompt\n"; exit 2 }
+}
+
+# --- Phase 2: mount the seed and launch the installer ----------------------
+# Do it all in ONE shell command so ordering is guaranteed by the shell, not by
+# expect's prompt matching (matching an intermediate marker races the command
+# echo). Dump blkid + device nodes first for diagnosability. The seed is a
+# virtio-blk disk (blkid -L VOIDSEED -> /dev/vdb). The not-found marker is
+# printf-assembled so the literal can't match its own echoed command line.
+send "S=\$(blkid -L VOIDSEED); echo seeddev:\$S; blkid; ls -l /dev/vd* /dev/sr* 2>/dev/null; mkdir -p /mnt/seed; mount -o ro \$S /mnt/seed; if test -f /mnt/seed/autorun.sh; then bash /mnt/seed/autorun.sh; else printf 'SEED%sABSENT\\n' _; fi\r"
+
+# --- Phase 3: await the result sentinel ------------------------------------
+# These markers appear only in command OUTPUT, never in the echoed command.
+set timeout $total_to
+expect {
+    -re {VOID_INSTALL_RESULT: OK}   { send_user "\n\[qemu-install] install OK\n" }
+    -re {VOID_INSTALL_RESULT: FAIL} { send_user "\n\[qemu-install] install FAILED\n"; exit 1 }
+    -re {SEED_ABSENT}               { send_user "\n\[qemu-install] seed autorun.sh not found\n"; exit 5 }
+    timeout { send_user "\n\[qemu-install] TIMEOUT during install\n"; exit 3 }
+    eof     { send_user "\n\[qemu-install] QEMU exited without a result\n"; exit 4 }
+}
+
+# autorun.sh powers the guest off after signalling; let qemu wind down.
+set timeout 180
+expect eof
+exit 0

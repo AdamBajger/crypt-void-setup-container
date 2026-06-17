@@ -1,0 +1,66 @@
+#!/usr/bin/expect -f
+# qemu-verify.expect — boot the produced (encrypted) image under OVMF, supply
+# the LUKS passphrase at every prompt, and confirm it reaches userspace.
+#
+# The image keeps /boot inside the LUKS volume with GRUB_ENABLE_CRYPTODISK=y,
+# so the passphrase is asked twice: once by GRUB (to read /boot) and again by
+# the dracut crypt module (to mount root). Reaching the *first* prompt already
+# proves firmware -> GRUB -> cryptodisk works — the exact thing the container
+# build cannot demonstrate. Answering both lets us go all the way to userspace.
+#
+# Env:
+#   QX_QEMU     full qemu command (OVMF, boot from the raw disk, serial stdio)
+#   QX_LOGFILE  serial session log
+#   QX_TIMEOUT  inactivity-timeout budget (seconds)
+#   QX_LUKS     LUKS passphrase to type at each prompt
+
+set qemu     $env(QX_QEMU)
+set logfile  $env(QX_LOGFILE)
+set total_to $env(QX_TIMEOUT)
+set luks     $env(QX_LUKS)
+
+log_file -a $logfile
+log_user 1
+
+eval spawn $qemu
+
+set saw_prompt 0
+set sends 0
+
+set timeout $total_to
+expect {
+    # A passphrase prompt (GRUB's or dracut's). Answer it, but cap retries so a
+    # wrong passphrase can't loop forever.
+    -re {(?i)(enter passphrase|please enter passphrase|passphrase for)} {
+        set saw_prompt 1
+        incr sends
+        if {$sends > 6} {
+            send_user "\n\[qemu-verify] FAIL: passphrase prompt kept reappearing (wrong passphrase?)\n"
+            exit 3
+        }
+        sleep 1
+        send "$luks\r"
+        exp_continue
+    }
+    # Got past decryption into real userspace.
+    -re {(?i)(welcome to void|runit:|sddm|login:|systemd-logind|seatd|EXT4-fs.*mounted filesystem)} {
+        send_user "\n\[qemu-verify] OK: reached userspace.\n"
+        exit 0
+    }
+    timeout {
+        if {$saw_prompt} {
+            send_user "\n\[qemu-verify] PASS (boot+decrypt reached; no userspace token before idle timeout).\n"
+            exit 0
+        }
+        send_user "\n\[qemu-verify] FAIL: never reached the LUKS passphrase prompt\n"
+        exit 2
+    }
+    eof {
+        if {$saw_prompt} {
+            send_user "\n\[qemu-verify] PASS (boot+decrypt reached; VM exited).\n"
+            exit 0
+        }
+        send_user "\n\[qemu-verify] FAIL: VM exited before the passphrase prompt\n"
+        exit 2
+    }
+}

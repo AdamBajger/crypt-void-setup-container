@@ -3,7 +3,9 @@ bash
 dbus
 elogind
 sudo
-linux-lts
+# linux = latest mainline kernel (linux-lts was too old: hard-hung on PCIe/ACPI
+# enumeration on recent AMD hardware). Use the newest kernel for broad HW support.
+linux
 
 # KDE6 Plasma desktop environment
 kde-plasma
@@ -17,6 +19,14 @@ xorg
 mesa-dri
 mesa-vulkan-intel
 mesa-vulkan-radeon
+
+# GPU + device firmware (portable across machines: AMD Radeon, Intel, Nvidia).
+# Without these the kernel GPU drivers fail to init. Nvidia works via the open
+# nouveau driver (in-kernel + mesa-dri) -- no per-host proprietary setup needed.
+linux-firmware-amd
+linux-firmware-intel
+linux-firmware-nvidia
+linux-firmware-network
 
 # Desktop integration tools
 xdg-desktop-portal-kde
@@ -60,18 +70,23 @@ fping
 
 # Archive tools
 ark
+# xz: required -- void-setup-extras unpacks Firefox from a .tar.xz (tar -xJf).
+# Was only present transitively via the now-trimmed apps, so list it explicitly.
+xz
 
 # Text editors
 vim
 kate
 
 # Development tools
-gcc
+# [trimmed-for-16gb-stick] re-enable when targeting a >=32 GB device
+#gcc
 python3-setuptools
-uv
+#uv
 
 # Input device managers
-Solaar
+# [trimmed-for-16gb-stick]
+#Solaar
 
 # System administration tools
 htop
@@ -83,15 +98,17 @@ libparted
 gvfs
 
 # Container, virtualization, and Kubernetes tools
-docker
-docker-buildx
-docker-compose
-qemu
-kubectl
-helm
+# [trimmed-for-16gb-stick] re-enable when targeting a >=32 GB device
+#docker
+#docker-buildx
+#docker-compose
+#qemu
+#kubectl
+#helm
 
 # Networking & VPN tools
-eduvpn-client
+# [trimmed-for-16gb-stick]
+#eduvpn-client
 nm-tray
 
 # Firewall management
@@ -105,12 +122,14 @@ grub-x86_64-efi
 chrony
 
 # Media & office applications
-libreoffice
-vlc
+# [trimmed-for-16gb-stick] re-enable when targeting a >=32 GB device
+#libreoffice
+#vlc
 
 # System utilities
 pigz
-postgresql-client
+# [trimmed-for-16gb-stick]
+#postgresql-client
 rtkit
 void-docs-browse
 xmirror

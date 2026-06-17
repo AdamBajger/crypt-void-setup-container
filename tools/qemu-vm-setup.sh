@@ -2,17 +2,25 @@
 # tools/qemu-vm-setup.sh - QEMU command-line builder + run helpers.
 #
 # Provides:
-#   run_install_vm <raw-disk> <live-iso> <seed-iso> <signal-socket> [logfile]
-#   run_verify_vm  <raw-disk> [logfile] [timeout-seconds]
+#   run_install_vm <raw-disk> <live-iso> <seed-iso> <logfile> [timeout]
+#   run_verify_vm  <raw-disk> <logfile> [timeout] [luks-passphrase]
 #
-# Both functions assemble qemu-system-x86_64 invocations with OVMF, KVM if
-# available, and headless serial-on-stdio.
+# The install VM boots the Void live kernel/initrd DIRECTLY (qemu -kernel/
+# -initrd/-append) so we can append `console=ttyS0,115200n8 live.autologin`
+# to the cmdline without remastering the ISO. The live squashfs is still found
+# on the attached cdrom via root=live:CDLABEL=VOID_LIVE. Both VMs are then
+# driven over the serial console by an expect script (see tools/*.expect).
 
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 # Distros disagree on OVMF filenames. Probe known locations; the env vars
 # still let a caller override.
-_qemu_first_existing() { for f in "$@"; do [[ -f "$f" ]] && { echo "$f"; return; }; done; }
+# Echoes the first existing path, or nothing. Always exits 0 so an empty result
+# doesn't abort a `set -e` caller at source time (the install phase needs no
+# OVMF; run_verify_vm validates the OVMF paths explicitly when it actually runs).
+_qemu_first_existing() { for f in "$@"; do [[ -f "$f" ]] && { echo "$f"; return 0; }; done; return 0; }
 QEMU_OVMF_CODE="${QEMU_OVMF_CODE:-$(_qemu_first_existing \
     /usr/share/OVMF/OVMF_CODE_4M.fd \
     /usr/share/OVMF/OVMF_CODE.fd \
@@ -64,47 +72,104 @@ qemu_ovmf_args() {
         "${QEMU_OVMF_CODE}" "${vars}"
 }
 
+# Extracts the live kernel + initrd and derives the boot cmdline from the ISO.
+# Sets QEMU_KERNEL, QEMU_INITRD and QEMU_APPEND.
+qemu_extract_live_boot() {
+    local iso="$1"
+    command -v xorriso >/dev/null || { _qemu_log "ERROR: xorriso required to extract live kernel"; return 1; }
+
+    QEMU_KERNEL="${QEMU_WORK_DIR}/vmlinuz"
+    QEMU_INITRD="${QEMU_WORK_DIR}/initrd"
+    rm -f "${QEMU_KERNEL}" "${QEMU_INITRD}"
+
+    _qemu_log "Extracting /boot/vmlinuz and /boot/initrd from ${iso}..."
+    xorriso -osirrox on -indev "${iso}" \
+        -extract /boot/vmlinuz "${QEMU_KERNEL}" \
+        -extract /boot/initrd  "${QEMU_INITRD}" >/dev/null 2>&1 || true
+    [[ -s "${QEMU_KERNEL}" && -s "${QEMU_INITRD}" ]] || {
+        _qemu_log "ERROR: could not extract kernel/initrd from ${iso} (expected /boot/vmlinuz, /boot/initrd)"
+        return 1
+    }
+
+    # Reuse the ISO's own kernel cmdline so we match its dracut live params
+    # (CDLABEL, overlay, etc.) exactly, then append our serial + autologin bits.
+    local grubcfg="${QEMU_WORK_DIR}/grub_void.cfg" base=""
+    rm -f "${grubcfg}"
+    xorriso -osirrox on -indev "${iso}" -extract /boot/grub/grub_void.cfg "${grubcfg}" >/dev/null 2>&1 || true
+    [[ -s "${grubcfg}" ]] || xorriso -osirrox on -indev "${iso}" -extract /boot/grub/grub.cfg "${grubcfg}" >/dev/null 2>&1 || true
+    if [[ -s "${grubcfg}" ]]; then
+        # Take the first `linux`/`linuxefi` directive, joining GRUB's backslash
+        # line-continuations (void's grub.cfg wraps the long cmdline across
+        # several lines), then drop the first two tokens (the `linux` keyword
+        # and the kernel-image path), leaving the cmdline.
+        base=$(awk '
+            /^[[:space:]]*linux(efi)?[[:space:]]/ {
+                line=$0
+                while (line ~ /\\[[:space:]]*$/) {
+                    sub(/\\[[:space:]]*$/, "", line)
+                    if ((getline nxt) <= 0) break
+                    line = line " " nxt
+                }
+                sub(/^[[:space:]]*linux(efi)?[[:space:]]+[^[:space:]]+[[:space:]]+/, "", line)
+                print line
+                exit
+            }
+        ' "${grubcfg}") || base=""
+    fi
+    # Only trust a parsed cmdline that actually names a root device; otherwise
+    # fall back to a known-good void-live default.
+    if [[ "${base}" != *root=* ]]; then
+        _qemu_log "WARNING: could not parse a usable live cmdline from grub config; using a default."
+        base="root=live:CDLABEL=VOID_LIVE ro init=/sbin/init rd.luks=0 rd.md=0 rd.dm=0 loglevel=4 gpt rd.live.overlay.overlayfs=1"
+    fi
+    # Drop any console= the ISO set so ours win, then put ttyS0 last (primary).
+    base=$(echo "${base}" | sed -E 's/console=[^[:space:]]+//g' | tr -s ' ')
+    QEMU_APPEND="${base} console=tty0 console=ttyS0,115200n8 live.autologin"
+    export QEMU_KERNEL QEMU_INITRD QEMU_APPEND
+    _qemu_log "Live boot cmdline: ${QEMU_APPEND}"
+}
+
 run_install_vm() {
-    local disk="$1" live_iso="$2" seed_iso="$3" signal_sock="$4" logfile="${5:-${QEMU_WORK_DIR}/install.log}"
+    local disk="$1" live_iso="$2" seed_iso="$3" logfile="${4:-${QEMU_WORK_DIR}/install.log}" timeout="${5:-3600}"
 
     [[ -f "${disk}" ]]      || { _qemu_log "missing disk ${disk}"; return 1; }
     [[ -f "${live_iso}" ]]  || { _qemu_log "missing live ISO ${live_iso}"; return 1; }
     [[ -f "${seed_iso}" ]]  || { _qemu_log "missing seed ISO ${seed_iso}"; return 1; }
+    command -v expect >/dev/null || { _qemu_log "ERROR: expect is required"; return 1; }
 
-    local vars; vars=$(qemu_prepare_vars install)
+    qemu_extract_live_boot "${live_iso}" || return 1
+
     local accel; accel=$(qemu_accel_args)
-    local ovmf;  ovmf=$(qemu_ovmf_args "${vars}")
-
-    rm -f "${signal_sock}"
 
     _qemu_log "Booting install VM (disk=${disk}, live=${live_iso}, seed=${seed_iso})"
-    _qemu_log "  signal socket: ${signal_sock}"
-    _qemu_log "  serial log:    ${logfile}"
+    _qemu_log "  serial log: ${logfile}"
 
-    # shellcheck disable=SC2086
-    qemu-system-x86_64 \
-        ${accel} \
-        -m "${QEMU_RAM}" \
-        -smp "${QEMU_VCPUS}" \
-        ${ovmf} \
-        -drive if=virtio,format=raw,file="${disk}",cache=none,discard=unmap \
-        -drive media=cdrom,readonly=on,file="${live_iso}" \
-        -drive media=cdrom,readonly=on,file="${seed_iso}" \
-        -boot order=d,menu=off \
-        -device virtio-serial-pci \
-        -chardev socket,id=instchan,path="${signal_sock}",server=on,wait=off \
-        -device virtserialport,chardev=instchan,name=qemu-install-status \
-        -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-        -display none \
-        -serial "file:${logfile}" \
-        -monitor none \
-        -no-reboot
+    # Built as a single string for expect's `eval spawn`. Paths in CI contain
+    # no whitespace; -append is double-quoted so it stays a single arg.
+    local cmd="qemu-system-x86_64 ${accel} -m ${QEMU_RAM} -smp ${QEMU_VCPUS}"
+    cmd+=" -kernel ${QEMU_KERNEL} -initrd ${QEMU_INITRD} -append \"${QEMU_APPEND}\""
+    cmd+=" -drive if=virtio,format=raw,file=${disk},cache=none,discard=unmap"
+    cmd+=" -drive media=cdrom,readonly=on,file=${live_iso}"
+    # Attach the seed as a virtio-blk disk (=> /dev/vdb), NOT a second cdrom:
+    # q35 wires only one IDE/AHCI cdrom reliably, so a second media=cdrom may
+    # silently not appear. virtio-blk always attaches; blkid -L VOIDSEED finds it.
+    cmd+=" -drive if=virtio,format=raw,readonly=on,file=${seed_iso}"
+    cmd+=" -netdev user,id=n0 -device virtio-net-pci,netdev=n0"
+    cmd+=" -display none -serial stdio -monitor none -no-reboot"
+
+    : >"${logfile}"
+    # Hard wall-clock cap: expect's own timeout is an *inactivity* timeout, so a
+    # guest that keeps emitting output could otherwise run until the CI job is
+    # killed. Bound it (+15 min slack over the install budget) and SIGKILL.
+    QX_QEMU="${cmd}" QX_LOGFILE="${logfile}" QX_TIMEOUT="${timeout}" \
+        timeout -s KILL "$(( timeout + 900 ))" expect -f "${REPO_ROOT}/tools/qemu-install.expect"
 }
 
 run_verify_vm() {
-    local disk="$1" logfile="${2:-${QEMU_WORK_DIR}/verify.log}" timeout="${3:-180}"
+    local disk="$1" logfile="${2:-${QEMU_WORK_DIR}/verify.log}" timeout="${3:-300}" luks="${4:-ci-luks-password-not-secret}"
 
     [[ -f "${disk}" ]] || { _qemu_log "missing disk ${disk}"; return 1; }
+    command -v expect >/dev/null || { _qemu_log "ERROR: expect is required"; return 1; }
 
     local vars; vars=$(qemu_prepare_vars verify)
     local accel; accel=$(qemu_accel_args)
@@ -113,22 +178,15 @@ run_verify_vm() {
     _qemu_log "Booting verify VM (disk=${disk}, timeout=${timeout}s)"
     _qemu_log "  serial log: ${logfile}"
 
-    : >"${logfile}"
+    local cmd="qemu-system-x86_64 ${accel} -m ${QEMU_RAM} -smp ${QEMU_VCPUS} ${ovmf}"
+    cmd+=" -drive if=virtio,format=raw,file=${disk},cache=none,discard=unmap"
+    cmd+=" -boot order=c,menu=off"
+    cmd+=" -netdev user,id=n0 -device virtio-net-pci,netdev=n0"
+    cmd+=" -display none -serial stdio -monitor none -no-reboot"
 
-    # shellcheck disable=SC2086
-    timeout --foreground -s KILL "${timeout}" \
-        qemu-system-x86_64 \
-            ${accel} \
-            -m "${QEMU_RAM}" \
-            -smp "${QEMU_VCPUS}" \
-            ${ovmf} \
-            -drive if=virtio,format=raw,file="${disk}",cache=none,discard=unmap \
-            -boot order=c,menu=off \
-            -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-            -display none \
-            -serial "file:${logfile}" \
-            -monitor none \
-            -no-reboot || true
+    : >"${logfile}"
+    QX_QEMU="${cmd}" QX_LOGFILE="${logfile}" QX_TIMEOUT="${timeout}" QX_LUKS="${luks}" \
+        expect -f "${REPO_ROOT}/tools/qemu-verify.expect"
 }
 
 # When this file is executed (not sourced), print the resolved settings so

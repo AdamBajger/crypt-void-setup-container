@@ -196,14 +196,28 @@ DRACUT
 # ---------------------------------------------------------------------------
 echo "Configuring GRUB..."
 
+# console=tty0 keeps the local display as the primary console (graphical login
+# is unaffected); console=ttyS0 additionally mirrors kernel + initramfs output
+# (including the dracut LUKS passphrase prompt) to the serial port. This is what
+# lets the headless QEMU verify step observe the boot, and it doubles as a
+# real-world debugging aid on hardware with a serial header. Harmless otherwise.
 cat > /etc/default/grub << GRUBCONF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=5
 GRUB_DISTRIBUTOR="Void Linux"
 GRUB_ENABLE_CRYPTODISK=y
-GRUB_CMDLINE_LINUX_DEFAULT="loglevel=4 rd.luks.uuid=${VOID_LUKS_UUID} rd.lvm.vg=${VOID_LVM_VG_NAME} root=/dev/${VOID_LVM_VG_NAME}/${VOID_LVM_ROOT_LV_NAME}"
+GRUB_CMDLINE_LINUX_DEFAULT="loglevel=4 rd.luks.uuid=${VOID_LUKS_UUID} rd.lvm.vg=${VOID_LVM_VG_NAME} root=/dev/${VOID_LVM_VG_NAME}/${VOID_LVM_ROOT_LV_NAME} console=tty0 console=ttyS0,115200n8"
 GRUB_CMDLINE_LINUX=""
 GRUBCONF
+
+# GRUB itself should also speak to the serial port so the menu/timeout is
+# visible (and selectable) over serial in headless verify.
+if ! grep -q '^GRUB_TERMINAL' /etc/default/grub; then
+    cat >> /etc/default/grub << 'GRUBSERIAL'
+GRUB_TERMINAL="console serial"
+GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200"
+GRUBSERIAL
+fi
 
 echo "Installing GRUB to EFI partition..."
 grub-install \

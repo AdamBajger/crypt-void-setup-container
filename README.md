@@ -98,11 +98,20 @@ The container path runs on every push/PR for fast feedback. It cannot prove
 the produced image actually boots, and Flatpak installs are deferred to a
 runit `firstboot` service that completes on the user's first real boot.
 
-The QEMU path is `workflow_dispatch` only because it is slow. It boots an
-official Void live ISO under OVMF and drives the same `install-core.sh` end
-to end, then can boot the produced image to verify it actually works. It is
-also the natural place to let the Flatpak first-boot service run to
-completion in CI rather than on the user's machine.
+The QEMU path is `workflow_dispatch` only because it is slow. It boots the
+official Void live ISO's kernel directly (`qemu -kernel/-initrd/-append`,
+appending `console=ttyS0,115200n8 live.autologin` so the live system comes up
+on the serial console with an autologin shell), then an `expect` script
+(`tools/qemu-install.expect`) logs in, launches the seed `autorun.sh`, and
+drives the same `install-core.sh` end to end against `/dev/vda`. When the
+installer finishes, `autorun.sh` prints a `VOID_INSTALL_RESULT: OK|FAIL`
+sentinel to the console that expect keys off. The produced image is then
+booted under OVMF; `tools/qemu-verify.expect` types the LUKS passphrase at the
+dracut prompt and confirms it boots past decryption.
+
+Reaching the passphrase prompt is the deterministic success signal — it proves
+the firmware → GRUB → kernel → initramfs + crypt chain works, which is exactly
+what the container path cannot demonstrate.
 
 ## Binary supply chain
 
@@ -141,12 +150,17 @@ Two parallel workflows build the image:
   `void-image-container-<sha>` (image + logs, 14-day retention).
 
 - `.github/workflows/build-image-qemu.yml` — `workflow_dispatch` only.
-  Installs `qemu-system-x86`, `ovmf`, `xorriso`, `expect`, `socat`, etc.,
-  runs the same fetch + preflight steps, then drives `tools/qemu-build.sh`
-  which boots the live ISO under OVMF and runs the install scripts inside
-  the VM with `VOID_DEVICE_BACKEND=raw` and `VOID_TARGET_DEVICE=/dev/vda`.
-  Compresses to `output/void-vm.raw.zst` and uploads
-  `void-image-qemu-<sha>`.
+  Installs `qemu-system-x86`, `qemu-utils`, `ovmf`, `xorriso`, `expect`,
+  `jq`, etc. (and opens `/dev/kvm` so the runner user can use it), runs the
+  same fetch + preflight steps, then drives `tools/qemu-build.sh` which runs
+  the install scripts inside the VM with `VOID_DEVICE_BACKEND=raw` and
+  `VOID_TARGET_DEVICE=/dev/vda`. Compresses to `output/void-vm.raw.zst` and
+  uploads `void-image-qemu-<sha>` (image + `logs/`).
+
+  The QEMU image is a disposable smoke-test artifact: it bakes in fixed,
+  **non-secret** credentials (`ci-luks-password-not-secret`, etc. — see
+  `tools/qemu-seed-iso.sh`), because the live VM does not inherit the host's
+  environment. Do not treat it as a personal install.
 
 ### Downloading the artifact
 
@@ -201,6 +215,70 @@ VOID_XBPS_REPOSITORY=https://repo-default.voidlinux.org/current   # optional
 
 The container runs `--privileged` (needed for loop devices, dm-crypt, LVM)
 and writes the output image to `./output/`.
+
+### Running the QEMU pipeline locally
+
+The QEMU track runs the full end-to-end install inside a VM and then boots the
+result. It needs hardware virtualisation (`/dev/kvm`) to finish in a reasonable
+time — without KVM it falls back to TCG and takes hours.
+
+Host prerequisites (Debian/Ubuntu names): `qemu-system-x86`, `qemu-utils`,
+`ovmf`, `xorriso`, `expect`, `jq`, `gnupg`, `curl`, `zstd`. Confirm KVM with
+`kvm-ok` (from `cpu-checker`), and make sure your user can open `/dev/kvm`
+(be in the `kvm` group, or `sudo chmod 666 /dev/kvm`).
+
+```sh
+bash tools/fetch-binaries.sh           # download + manifest the upstream blobs
+bash tools/preflight-verify-binaries.sh
+bash tools/qemu-build.sh               # build seed ISO, install in a VM, verify boot
+```
+
+The finished image is `output/void-vm.raw`; the live serial logs land in
+`logs/qemu-install.log` and `logs/qemu-verify.log`. Useful knobs (env vars):
+`QEMU_RAM` (MiB, default 4096), `QEMU_VCPUS` (4), `QEMU_DISK_SIZE` (16G),
+`QEMU_INSTALL_TIMEOUT` (3600s). The image uses the fixed non-secret CI
+credentials noted above.
+
+### Interactive local install (no seed ISO / no expect)
+
+For a hands-on local build — boot the live ISO yourself, then run one command
+inside the VM — use `build.sh` instead of the automated `qemu-build.sh`. It
+expects **this repo mounted into the guest** and reuses the same
+`entrypoint.sh`; there is no seed image, no `git clone`, and no binary download
+(the binaries come from the mounted, already-populated `binaries/`).
+
+One requirement: **populate `binaries/` on the host first**
+(`bash tools/fetch-binaries.sh`). Any Void live ISO works — `build.sh` installs
+the partitioning tools (`parted`, `cryptsetup`, `lvm2`, …) itself, so the
+stripped `-base` flavor is fine.
+
+#### Getting the repo into the guest
+
+The repo reaches the guest as a mounted filesystem — no copy, no clone:
+
+- **Windows host → QEMU vvfat.** A filtered, staged copy of the repo (vvfat
+  tops out at ~504 MiB and refuses >2 GiB files, so `.git`, `output/` and
+  ISO/raw images are excluded) is shown to the VM as a read-only FAT16 disk
+  (`/dev/vdb1`); no SMB, no `cifs-utils`, no credentials, no image build.
+  Run **one** command — it boots headless, logs in over a serial console, and
+  runs the in-VM build with **no QEMU window and no typing inside the VM**:
+  ```powershell
+  pwsh -File tools\windows\run-qemu.ps1
+  ```
+  Full walkthrough (modes `probe`/`interactive`, `-VerifyBoot`) in
+  **[docs/windows-qemu-build.md](docs/windows-qemu-build.md)**. The driver runs
+  the same one line you'd type by hand: `mount /dev/vdb1 /repo && bash
+  /repo/build.sh` (`/repo`, not `/mnt` — the installer mounts the target at
+  `/mnt/void-install`).
+
+- **Linux / WSL2 host → 9p (`-virtfs`).** Add to the qemu line:
+  `-virtfs local,path=$PWD,mount_tag=cvs,security_model=none,readonly=on`; in the
+  guest: `modprobe 9pnet_virtio; mount -t 9p -o trans=virtio,version=9p2000.L,ro cvs /mnt && bash /mnt/build.sh`.
+
+`build.sh` installs the installer tools, reads `.env` + `config/` from the
+mounted repo, and runs the install against `/dev/vda`. When it finishes, the
+target disk (`void-vm.raw`) is the etchable image. (`build.sh` wraps
+`tools/qemu-run-mounted.sh`, which is mount-method agnostic.)
 
 ## Build/Run notes
 

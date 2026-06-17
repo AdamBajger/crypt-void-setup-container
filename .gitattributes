@@ -1,2 +1,7 @@
 *.sh text eol=lf
 *.conf text eol=lf
+# Files read by the in-VM installer must stay LF even on Windows checkouts
+# (core.autocrlf=true): a stray CR turns each package token into "bash\r" and
+# breaks the xbps install. Covers config/extra-packages.txt et al.
+*.txt text eol=lf
+.env.example text eol=lf

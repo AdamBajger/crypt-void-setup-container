@@ -68,8 +68,12 @@ log "  ROOT_PASSWORD length: ${#ROOT_PASSWORD}"
 log "  USER_PASSWORD length: ${#USER_PASSWORD}"
 log "  LUKS_PASSWORD length: ${#LUKS_PASSWORD}"
 
-log "Running preflight verification for local binaries..."
-bash /tools/preflight-verify-binaries.sh
+if [[ -n "${VOID_SKIP_PREFLIGHT:-}" ]]; then
+    log "Skipping in-VM binary preflight (host already verified; live ISO lacks jq/gpg)."
+else
+    log "Running preflight verification for local binaries..."
+    bash /tools/preflight-verify-binaries.sh
+fi
 
 log "Reading disk configuration from ${DISK_CONFIG_FILE}..."
 load_config_file "${DISK_CONFIG_FILE}"

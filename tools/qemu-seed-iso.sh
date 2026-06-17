@@ -26,7 +26,19 @@ cp -a "${REPO_ROOT}/scripts"  "${STAGE_DIR}/scripts"
 cp -a "${REPO_ROOT}/config"   "${STAGE_DIR}/config"
 cp -a "${REPO_ROOT}/examples" "${STAGE_DIR}/examples"
 cp -a "${REPO_ROOT}/tools"    "${STAGE_DIR}/tools"
-cp -a "${REPO_ROOT}/binaries" "${STAGE_DIR}/binaries"
+
+# Copy binaries/ EXCEPT the upstream live ISO: it is the boot medium, not an
+# install input, and dragging ~700 MiB through the seed ISO and into the live
+# VM's RAM overlay risks OOM. The ISO is verified on the host before the build;
+# autorun.sh sets PREFLIGHT_SKIP_ISO=1 so the in-VM preflight skips it.
+mkdir -p "${STAGE_DIR}/binaries"
+for entry in "${REPO_ROOT}/binaries"/* "${REPO_ROOT}/binaries"/.[!.]*; do
+    [[ -e "${entry}" ]] || continue
+    case "$(basename "${entry}")" in
+        void-iso) continue ;;
+        *) cp -a "${entry}" "${STAGE_DIR}/binaries/" ;;
+    esac
+done
 
 # Top-level autorun.sh — runs inside the Void live ISO as root.
 cat >"${STAGE_DIR}/autorun.sh" <<'AUTORUN_EOF'
@@ -39,20 +51,16 @@ set -uo pipefail
 
 SEED_MOUNT="/mnt/seed"
 INSTALL_ROOT="/root/install"
-SIGNAL_PORT="/dev/virtio-ports/qemu-install-status"
 
 log() { echo "[autorun] $*"; }
 
+# The host drives this VM over the serial console (ttyS0) and decides the
+# outcome by scraping for this exact sentinel. Emit it to the console
+# unconditionally so it survives whatever stdout redirection is in effect.
 signal_host() {
     local payload="$1"
-    if [[ -e "${SIGNAL_PORT}" ]]; then
-        printf '%s\n' "${payload}" > "${SIGNAL_PORT}" 2>/dev/null || true
-    fi
-    # Fallback: write to every vport node we can find so the host always sees it.
-    for p in /dev/vport*; do
-        [[ -e "${p}" ]] || continue
-        printf '%s\n' "${payload}" > "${p}" 2>/dev/null || true
-    done
+    printf '\n=== VOID_INSTALL_RESULT: %s ===\n' "${payload}" > /dev/console 2>/dev/null || \
+        printf '\n=== VOID_INSTALL_RESULT: %s ===\n' "${payload}"
     sync || true
 }
 
@@ -60,10 +68,10 @@ finish() {
     local status="$1"
     if [[ "${status}" -eq 0 ]]; then
         log "Install succeeded; signalling host."
-        signal_host "INSTALL_OK"
+        signal_host "OK"
     else
         log "Install failed (status ${status}); signalling host."
-        signal_host "INSTALL_FAIL"
+        signal_host "FAIL"
     fi
     sleep 2
     poweroff -f || /sbin/poweroff -f || halt -f
@@ -119,6 +127,33 @@ export VOID_TARGET_DEVICE=/dev/vda
 export LUKS_PASSWORD="${LUKS_PASSWORD:-ci-luks-password-not-secret}"
 export ROOT_PASSWORD="${ROOT_PASSWORD:-ci-root-password-not-secret}"
 export USER_PASSWORD="${USER_PASSWORD:-ci-user-password-not-secret}"
+
+# Binaries were fully verified on the host before this seed was built, and the
+# minimal live ISO has no jq/gpg — so skip the (redundant) in-VM preflight.
+export VOID_SKIP_PREFLIGHT=1
+export PREFLIGHT_SKIP_ISO=1
+
+# base-system installation pulls from the network repo, so make sure the
+# virtio NIC is up before handing off to the installer. The live ISO usually
+# starts dhcpcd itself; this is a best-effort backstop.
+log "Ensuring network connectivity..."
+if command -v dhcpcd >/dev/null 2>&1; then
+    dhcpcd -w -t 20 2>/dev/null || dhcpcd -t 20 2>/dev/null || true
+fi
+for _ in $(seq 1 15); do
+    ip route 2>/dev/null | grep -q '^default' && break
+    sleep 1
+done
+
+# The minimal Void "base" live ISO does not ship the partitioning/crypto/LVM
+# tools the installer needs (parted, cryptsetup, lvm2, mkfs.*). Pull them into
+# the live environment (writable overlay) before handing off.
+# xbps refuses to install anything until it self-updates when the live ISO's
+# xbps is older than the `current` repo ("The 'xbps' package must be updated").
+log "Updating xbps, then installing installer dependencies into the live env..."
+xbps-install -Suy xbps || log "WARNING: xbps self-update failed"
+xbps-install -Sy parted cryptsetup lvm2 dosfstools e2fsprogs gptfdisk \
+    || log "WARNING: xbps-install of installer deps failed (install may abort)"
 
 log "Running entrypoint.sh against ${VOID_TARGET_DEVICE}..."
 if bash /setup/entrypoint.sh; then

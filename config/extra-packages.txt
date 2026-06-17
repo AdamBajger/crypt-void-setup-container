@@ -3,7 +3,9 @@ bash
 dbus
 elogind
 sudo
-linux-lts
+# linux = latest mainline kernel (linux-lts was too old: hard-hung on PCIe/ACPI
+# enumeration on recent AMD hardware). Use the newest kernel for broad HW support.
+linux
 
 # KDE6 Plasma desktop environment
 kde-plasma
@@ -17,6 +19,14 @@ xorg
 mesa-dri
 mesa-vulkan-intel
 mesa-vulkan-radeon
+
+# GPU + device firmware (portable across machines: AMD Radeon, Intel, Nvidia).
+# Without these the kernel GPU drivers fail to init. Nvidia works via the open
+# nouveau driver (in-kernel + mesa-dri) -- no per-host proprietary setup needed.
+linux-firmware-amd
+linux-firmware-intel
+linux-firmware-nvidia
+linux-firmware-network
 
 # Desktop integration tools
 xdg-desktop-portal-kde
